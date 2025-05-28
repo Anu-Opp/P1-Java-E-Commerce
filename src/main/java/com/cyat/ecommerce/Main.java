@@ -4,9 +4,9 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class EcommerceApplication {
+public class Main {
     public static void main(String[] args) {
-        SpringApplication.run(EcommerceApplication.class, args);
+        SpringApplication.run(Main.class, args);
         System.out.println("E-commerce Backend Running...");
     }
 }
