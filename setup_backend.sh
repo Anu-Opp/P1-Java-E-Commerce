@@ -2,7 +2,7 @@
 
 # Set your actual values here
 AWS_REGION="us-east-1"
-S3_BUCKET_NAME="ceeyit-terraform-state-bucket"
+S3_BUCKET_NAME="ceeyit-tf-state-anu2025"
 DYNAMODB_TABLE_NAME="terraform-locks"
 
 # Create S3 Bucket (only if it doesn't exist)
