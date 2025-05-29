@@ -1,6 +1,6 @@
 terraform {
   backend "s3" {
-    bucket         = "ceeyit-terraform-state-bucket"
+    bucket         = "ceeyit-tf-state-anu2025"
     key            = "ecommerce/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "terraform-locks"
