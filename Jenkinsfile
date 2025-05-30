@@ -8,7 +8,7 @@ pipeline {
     stages {
         stage('Checkout Code') {
             steps {
-                git branch: 'test',
+                git branch: 'dev', 
                     url: 'https://github.com/Anu-Opp/P1-Java-E-Commerce.git',
                     credentialsId: 'github-credentials'
             }
@@ -37,13 +37,12 @@ pipeline {
             }
         }
 
-        stage('Configure AWS CLI') {
+        stage('Setup Kubeconfig') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'AWS-Access-Key', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
                     sh '''
-                        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-                        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-                        aws configure set region us-east-1
+                        mkdir -p ~/.kube
+                        cp $KUBECONFIG_FILE ~/.kube/config
                     '''
                 }
             }
