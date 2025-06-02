@@ -8,7 +8,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/backend-protocol: HTTP
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-    alb.ingress.kubernetes.io/group.name: ecommerce-ingress-group
+    alb.ingress.kubernetes.io/group.name: ecommerce
     kubernetes.io/ingress.class: alb
 spec:
   ingressClassName: alb
@@ -19,6 +19,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: java-ecommerce
+                name: ecommerce-simple
                 port:
                   number: 80
