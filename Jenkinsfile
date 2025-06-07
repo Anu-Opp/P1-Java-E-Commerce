@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'maven:3.8.6-openjdk-17'
+            args '-v /root/.m2:/root/.m2'
+        }
+    }
 
     environment {
         DOCKER_IMAGE = "anuopp/java-ecommerce"
@@ -21,12 +26,14 @@ pipeline {
         }
 
         stage('Build Docker Image') {
+            agent any  // Run this outside of the Maven container
             steps {
                 sh 'docker build -t $DOCKER_IMAGE .'
             }
         }
 
         stage('Push Docker Image') {
+            agent any
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                     sh '''
@@ -38,6 +45,7 @@ pipeline {
         }
 
         stage('Setup Kubeconfig') {
+            agent any
             steps {
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
                     sh '''
@@ -49,6 +57,7 @@ pipeline {
         }
 
         stage('Deploy to Kubernetes') {
+            agent any
             steps {
                 sh 'kubectl apply -f deployment.yaml'
                 sh 'kubectl apply -f service.yaml'
