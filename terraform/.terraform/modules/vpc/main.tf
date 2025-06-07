@@ -10,7 +10,6 @@ locals {
   max_subnet_length = max(
     local.len_private_subnets,
     local.len_public_subnets,
-    local.len_intra_subnets,
     local.len_elasticache_subnets,
     local.len_database_subnets,
     local.len_redshift_subnets,
@@ -60,6 +59,39 @@ resource "aws_vpc_ipv4_cidr_block_association" "this" {
   cidr_block = element(var.secondary_cidr_blocks, count.index)
 }
 
+resource "aws_vpc_block_public_access_options" "this" {
+  count = local.create_vpc && length(keys(var.vpc_block_public_access_options)) > 0 ? 1 : 0
+
+  internet_gateway_block_mode = try(var.vpc_block_public_access_options["internet_gateway_block_mode"], null)
+}
+
+resource "aws_vpc_block_public_access_exclusion" "this" {
+  for_each = { for k, v in var.vpc_block_public_access_exclusions : k => v if local.create_vpc }
+
+  vpc_id = try(each.value.exclude_vpc, false) ? local.vpc_id : null
+
+  subnet_id = try(each.value.exclude_subnet, false) ? lookup(
+    {
+      private     = aws_subnet.private[*].id,
+      public      = aws_subnet.public[*].id,
+      database    = aws_subnet.database[*].id,
+      redshift    = aws_subnet.redshift[*].id,
+      elasticache = aws_subnet.elasticache[*].id,
+      intra       = aws_subnet.intra[*].id,
+      outpost     = aws_subnet.outpost[*].id
+    },
+    each.value.subnet_type,
+    null
+  )[each.value.subnet_index] : null
+
+  internet_gateway_exclusion_mode = each.value.internet_gateway_exclusion_mode
+
+  tags = merge(
+    var.tags,
+    try(each.value.tags, {}),
+  )
+}
+
 ################################################################################
 # DHCP Options Set
 ################################################################################
@@ -67,11 +99,12 @@ resource "aws_vpc_ipv4_cidr_block_association" "this" {
 resource "aws_vpc_dhcp_options" "this" {
   count = local.create_vpc && var.enable_dhcp_options ? 1 : 0
 
-  domain_name          = var.dhcp_options_domain_name
-  domain_name_servers  = var.dhcp_options_domain_name_servers
-  ntp_servers          = var.dhcp_options_ntp_servers
-  netbios_name_servers = var.dhcp_options_netbios_name_servers
-  netbios_node_type    = var.dhcp_options_netbios_node_type
+  domain_name                       = var.dhcp_options_domain_name
+  domain_name_servers               = var.dhcp_options_domain_name_servers
+  ntp_servers                       = var.dhcp_options_ntp_servers
+  netbios_name_servers              = var.dhcp_options_netbios_name_servers
+  netbios_node_type                 = var.dhcp_options_netbios_node_type
+  ipv6_address_preferred_lease_time = var.dhcp_options_ipv6_address_preferred_lease_time
 
   tags = merge(
     { "Name" = var.name },
@@ -124,13 +157,22 @@ resource "aws_subnet" "public" {
   )
 }
 
+locals {
+  num_public_route_tables = var.create_multiple_public_route_tables ? local.len_public_subnets : 1
+}
+
 resource "aws_route_table" "public" {
-  count = local.create_public_subnets ? 1 : 0
+  count = local.create_public_subnets ? local.num_public_route_tables : 0
 
   vpc_id = local.vpc_id
 
   tags = merge(
-    { "Name" = "${var.name}-${var.public_subnet_suffix}" },
+    {
+      "Name" = var.create_multiple_public_route_tables ? format(
+        "${var.name}-${var.public_subnet_suffix}-%s",
+        element(var.azs, count.index),
+      ) : "${var.name}-${var.public_subnet_suffix}"
+    },
     var.tags,
     var.public_route_table_tags,
   )
@@ -140,13 +182,13 @@ resource "aws_route_table_association" "public" {
   count = local.create_public_subnets ? local.len_public_subnets : 0
 
   subnet_id      = element(aws_subnet.public[*].id, count.index)
-  route_table_id = aws_route_table.public[0].id
+  route_table_id = element(aws_route_table.public[*].id, var.create_multiple_public_route_tables ? count.index : 0)
 }
 
 resource "aws_route" "public_internet_gateway" {
-  count = local.create_public_subnets && var.create_igw ? 1 : 0
+  count = local.create_public_subnets && var.create_igw ? local.num_public_route_tables : 0
 
-  route_table_id         = aws_route_table.public[0].id
+  route_table_id         = aws_route_table.public[count.index].id
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.this[0].id
 
@@ -156,9 +198,9 @@ resource "aws_route" "public_internet_gateway" {
 }
 
 resource "aws_route" "public_internet_gateway_ipv6" {
-  count = local.create_public_subnets && var.create_igw && var.enable_ipv6 ? 1 : 0
+  count = local.create_public_subnets && var.create_igw && var.enable_ipv6 ? local.num_public_route_tables : 0
 
-  route_table_id              = aws_route_table.public[0].id
+  route_table_id              = aws_route_table.public[count.index].id
   destination_ipv6_cidr_block = "::/0"
   gateway_id                  = aws_internet_gateway.this[0].id
 }
@@ -817,13 +859,22 @@ resource "aws_subnet" "intra" {
   )
 }
 
+locals {
+  num_intra_route_tables = var.create_multiple_intra_route_tables ? local.len_intra_subnets : 1
+}
+
 resource "aws_route_table" "intra" {
-  count = local.create_intra_subnets ? 1 : 0
+  count = local.create_intra_subnets ? local.num_intra_route_tables : 0
 
   vpc_id = local.vpc_id
 
   tags = merge(
-    { "Name" = "${var.name}-${var.intra_subnet_suffix}" },
+    {
+      "Name" = var.create_multiple_intra_route_tables ? format(
+        "${var.name}-${var.intra_subnet_suffix}-%s",
+        element(var.azs, count.index),
+      ) : "${var.name}-${var.intra_subnet_suffix}"
+    },
     var.tags,
     var.intra_route_table_tags,
   )
@@ -833,7 +884,7 @@ resource "aws_route_table_association" "intra" {
   count = local.create_intra_subnets ? local.len_intra_subnets : 0
 
   subnet_id      = element(aws_subnet.intra[*].id, count.index)
-  route_table_id = element(aws_route_table.intra[*].id, 0)
+  route_table_id = element(aws_route_table.intra[*].id, var.create_multiple_intra_route_tables ? count.index : 0)
 }
 
 ################################################################################
@@ -1022,7 +1073,7 @@ resource "aws_egress_only_internet_gateway" "this" {
 }
 
 resource "aws_route" "private_ipv6_egress" {
-  count = local.create_vpc && var.create_egress_only_igw && var.enable_ipv6 ? local.len_private_subnets : 0
+  count = local.create_vpc && var.create_egress_only_igw && var.enable_ipv6 && local.len_private_subnets > 0 ? local.nat_gateway_count : 0
 
   route_table_id              = element(aws_route_table.private[*].id, count.index)
   destination_ipv6_cidr_block = "::/0"
@@ -1035,7 +1086,7 @@ resource "aws_route" "private_ipv6_egress" {
 
 locals {
   nat_gateway_count = var.single_nat_gateway ? 1 : var.one_nat_gateway_per_az ? length(var.azs) : local.max_subnet_length
-  nat_gateway_ips   = var.reuse_nat_ips ? var.external_nat_ip_ids : try(aws_eip.nat[*].id, [])
+  nat_gateway_ips   = var.reuse_nat_ips ? var.external_nat_ip_ids : aws_eip.nat[*].id
 }
 
 resource "aws_eip" "nat" {
@@ -1084,7 +1135,7 @@ resource "aws_nat_gateway" "this" {
 }
 
 resource "aws_route" "private_nat_gateway" {
-  count = local.create_vpc && var.enable_nat_gateway ? local.nat_gateway_count : 0
+  count = local.create_vpc && var.enable_nat_gateway && var.create_private_nat_gateway_route ? local.nat_gateway_count : 0
 
   route_table_id         = element(aws_route_table.private[*].id, count.index)
   destination_cidr_block = var.nat_gateway_destination_cidr_block
@@ -1124,6 +1175,10 @@ resource "aws_customer_gateway" "this" {
     var.tags,
     var.customer_gateway_tags,
   )
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 ################################################################################
