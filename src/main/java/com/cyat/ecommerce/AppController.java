@@ -14,7 +14,7 @@ public class AppController {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>CEEYIT E-Commerce</title>
+            <title>A-class Closet</title>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
             <style>
                 * {
@@ -630,11 +630,11 @@ public class AppController {
                 <div class="header-content">
                     <div class="header-left">
                         <div class="logo">
-                            <div class="logo-text">CE</div>
+                            <div class="logo-text">AC2</div>
                         </div>
                     </div>
                     <div class="header-center">
-                        <h1>Welcome to CEEYIT E-Commerce</h1>
+                        <h1>A-Class Closet</h1>
                         <h2>Premium Digital Solutions for Modern Businesses</h2>
                     </div>
                 </div>
@@ -643,9 +643,9 @@ public class AppController {
                         <i class="fas fa-phone contact-icon"></i>
                         <span class="contact-text">+1 (234) 567-8900</span>
                     </a>
-                    <a href="mailto:hello@ceeyit.com" class="contact-item">
+                    <a href="mailto:hello@ac2.com" class="contact-item">
                         <i class="fas fa-envelope contact-icon"></i>
-                        <span class="contact-text">hello@ceeyit.com</span>
+                        <span class="contact-text">hello@ac2.com</span>
                     </a>
                 </div>
             </div>
@@ -772,7 +772,7 @@ public class AppController {
             
             <div class="footer">
                 <div class="footer-content">
-                    <p>&copy; 2025 CEEYIT E-Commerce. Crafted with precision for modern enterprises.</p>
+                    <p>&copy; 2025 A-class closet. Crafted with precision for modern enterprises.</p>
                 </div>
             </div>
             
@@ -820,7 +820,7 @@ public class AppController {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Mobile-First Commerce - CEEYIT E-Commerce</title>
+            <title>Mobile-First Commerce - A-class closet</title>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
             <style>
                 * {
@@ -1176,7 +1176,7 @@ public class AppController {
                 <div class="header-content">
                     <div class="header-left">
                         <div class="logo">
-                            <div class="logo-text">CE</div>
+                            <div class="logo-text">AC2</div>
                         </div>
                         <a href="/" class="back-link">
                             <i class="fas fa-arrow-left"></i>
@@ -1260,7 +1260,7 @@ public class AppController {
             
             <div class="footer">
                 <div class="footer-content">
-                    <p>&copy; 2025 CEEYIT E-Commerce. Pioneering mobile commerce innovation.</p>
+                    <p>&copy; 2025 A-class Closet. Pioneering mobile commerce innovation.</p>
                 </div>
             </div>
         </body>
