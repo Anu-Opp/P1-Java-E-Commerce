@@ -116,6 +116,18 @@ variable "tags" {
   default     = {}
 }
 
+variable "vpc_block_public_access_options" {
+  description = "A map of VPC block public access options"
+  type        = map(string)
+  default     = {}
+}
+
+variable "vpc_block_public_access_exclusions" {
+  description = "A map of VPC block public access exclusions"
+  type        = map(any)
+  default     = {}
+}
+
 ################################################################################
 # DHCP Options Set
 ################################################################################
@@ -156,6 +168,12 @@ variable "dhcp_options_netbios_node_type" {
   default     = ""
 }
 
+variable "dhcp_options_ipv6_address_preferred_lease_time" {
+  description = "How frequently, in seconds, a running instance with an IPv6 assigned to it goes through DHCPv6 lease renewal (requires enable_dhcp_options set to true)"
+  type        = number
+  default     = null
+}
+
 variable "dhcp_options_tags" {
   description = "Additional tags for the DHCP option set (requires enable_dhcp_options set to true)"
   type        = map(string)
@@ -192,6 +210,12 @@ variable "public_subnet_enable_resource_name_dns_aaaa_record_on_launch" {
 
 variable "public_subnet_enable_resource_name_dns_a_record_on_launch" {
   description = "Indicates whether to respond to DNS queries for instance hostnames with DNS A records. Default: `false`"
+  type        = bool
+  default     = false
+}
+
+variable "create_multiple_public_route_tables" {
+  description = "Indicates whether to create a separate route table for each public subnet. Default: `false`"
   type        = bool
   default     = false
 }
@@ -358,6 +382,12 @@ variable "private_subnet_suffix" {
   description = "Suffix to append to private subnets name"
   type        = string
   default     = "private"
+}
+
+variable "create_private_nat_gateway_route" {
+  description = "Controls if a nat gateway route should be created to give internet access to the private subnets"
+  type        = bool
+  default     = true
 }
 
 variable "private_subnet_tags" {
@@ -914,6 +944,12 @@ variable "intra_subnet_enable_resource_name_dns_a_record_on_launch" {
   default     = false
 }
 
+variable "create_multiple_intra_route_tables" {
+  description = "Indicates whether to create a separate route table for each intra subnet. Default: `false`"
+  type        = bool
+  default     = false
+}
+
 variable "intra_subnet_ipv6_prefixes" {
   description = "Assigns IPv6 intra subnet id based on the Amazon provided /56 prefix base 10 integer (0-256). Must be of equal length to the corresponding IPv4 subnet list"
   type        = list(string)
@@ -1466,10 +1502,35 @@ variable "enable_flow_log" {
   default     = false
 }
 
+variable "vpc_flow_log_iam_role_name" {
+  description = "Name to use on the VPC Flow Log IAM role created"
+  type        = string
+  default     = "vpc-flow-log-role"
+}
+
+variable "vpc_flow_log_iam_role_use_name_prefix" {
+  description = "Determines whether the IAM role name (`vpc_flow_log_iam_role_name_name`) is used as a prefix"
+  type        = bool
+  default     = true
+}
+
+
 variable "vpc_flow_log_permissions_boundary" {
   description = "The ARN of the Permissions Boundary for the VPC Flow Log IAM Role"
   type        = string
   default     = null
+}
+
+variable "vpc_flow_log_iam_policy_name" {
+  description = "Name of the IAM policy"
+  type        = string
+  default     = "vpc-flow-log-to-cloudwatch"
+}
+
+variable "vpc_flow_log_iam_policy_use_name_prefix" {
+  description = "Determines whether the name of the IAM policy (`vpc_flow_log_iam_policy_name`) is used as a prefix"
+  type        = bool
+  default     = true
 }
 
 variable "flow_log_max_aggregation_interval" {
@@ -1485,7 +1546,7 @@ variable "flow_log_traffic_type" {
 }
 
 variable "flow_log_destination_type" {
-  description = "Type of flow log destination. Can be s3 or cloud-watch-logs"
+  description = "Type of flow log destination. Can be s3, kinesis-data-firehose or cloud-watch-logs"
   type        = string
   default     = "cloud-watch-logs"
 }
@@ -1500,6 +1561,12 @@ variable "flow_log_destination_arn" {
   description = "The ARN of the CloudWatch log group or S3 bucket where VPC Flow Logs will be pushed. If this ARN is a S3 bucket the appropriate permissions need to be set on that bucket's policy. When create_flow_log_cloudwatch_log_group is set to false this argument must be provided"
   type        = string
   default     = ""
+}
+
+variable "flow_log_deliver_cross_account_role" {
+  description = "(Optional) ARN of the IAM role that allows Amazon EC2 to publish flow logs across accounts."
+  type        = string
+  default     = null
 }
 
 variable "flow_log_file_format" {
@@ -1542,6 +1609,16 @@ variable "create_flow_log_cloudwatch_iam_role" {
   default     = false
 }
 
+variable "flow_log_cloudwatch_iam_role_conditions" {
+  description = "Additional conditions of the CloudWatch role assumption policy"
+  type = list(object({
+    test     = string
+    variable = string
+    values   = list(string)
+  }))
+  default = []
+}
+
 variable "flow_log_cloudwatch_iam_role_arn" {
   description = "The ARN for the IAM role that's used to post flow logs to a CloudWatch Logs log group. When flow_log_destination_arn is set to ARN of Cloudwatch Logs, this argument needs to be provided"
   type        = string
@@ -1568,6 +1645,18 @@ variable "flow_log_cloudwatch_log_group_retention_in_days" {
 
 variable "flow_log_cloudwatch_log_group_kms_key_id" {
   description = "The ARN of the KMS Key to use when encrypting log data for VPC flow logs"
+  type        = string
+  default     = null
+}
+
+variable "flow_log_cloudwatch_log_group_skip_destroy" {
+  description = " Set to true if you do not wish the log group (and any logs it may contain) to be deleted at destroy time, and instead just remove the log group from the Terraform state"
+  type        = bool
+  default     = false
+}
+
+variable "flow_log_cloudwatch_log_group_class" {
+  description = "Specified the log class of the log group. Possible values are: STANDARD or INFREQUENT_ACCESS"
   type        = string
   default     = null
 }

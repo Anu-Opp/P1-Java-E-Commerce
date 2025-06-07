@@ -78,6 +78,11 @@ output "vpc_owner_id" {
   value       = try(aws_vpc.this[0].owner_id, null)
 }
 
+output "vpc_block_public_access_exclusions" {
+  description = "A map of VPC block public access exclusions"
+  value       = { for k, v in aws_vpc_block_public_access_exclusion.this : k => v.id }
+}
+
 ################################################################################
 # DHCP Options Set
 ################################################################################
@@ -104,6 +109,11 @@ output "igw_arn" {
 ################################################################################
 # Publiс Subnets
 ################################################################################
+
+output "public_subnet_objects" {
+  description = "A list of all public subnets, containing the full objects."
+  value       = aws_subnet.public
+}
 
 output "public_subnets" {
   description = "List of IDs of public subnets"
@@ -159,6 +169,11 @@ output "public_network_acl_arn" {
 # Private Subnets
 ################################################################################
 
+output "private_subnet_objects" {
+  description = "A list of all private subnets, containing the full objects."
+  value       = aws_subnet.private
+}
+
 output "private_subnets" {
   description = "List of IDs of private subnets"
   value       = aws_subnet.private[*].id
@@ -213,6 +228,11 @@ output "private_network_acl_arn" {
 # Outpost Subnets
 ################################################################################
 
+output "outpost_subnet_objects" {
+  description = "A list of all outpost subnets, containing the full objects."
+  value       = aws_subnet.outpost
+}
+
 output "outpost_subnets" {
   description = "List of IDs of outpost subnets"
   value       = aws_subnet.outpost[*].id
@@ -247,6 +267,11 @@ output "outpost_network_acl_arn" {
 # Database Subnets
 ################################################################################
 
+output "database_subnet_objects" {
+  description = "A list of all database subnets, containing the full objects."
+  value       = aws_subnet.database
+}
+
 output "database_subnets" {
   description = "List of IDs of database subnets"
   value       = aws_subnet.database[*].id
@@ -279,7 +304,8 @@ output "database_subnet_group_name" {
 
 output "database_route_table_ids" {
   description = "List of IDs of database route tables"
-  value       = try(coalescelist(aws_route_table.database[*].id, local.private_route_table_ids), [])
+  # Refer to https://github.com/terraform-aws-modules/terraform-aws-vpc/pull/926 before changing logic
+  value = length(aws_route_table.database[*].id) > 0 ? aws_route_table.database[*].id : aws_route_table.private[*].id
 }
 
 output "database_internet_gateway_route_id" {
@@ -315,6 +341,11 @@ output "database_network_acl_arn" {
 ################################################################################
 # Redshift Subnets
 ################################################################################
+
+output "redshift_subnet_objects" {
+  description = "A list of all redshift subnets, containing the full objects."
+  value       = aws_subnet.redshift
+}
 
 output "redshift_subnets" {
   description = "List of IDs of redshift subnets"
@@ -370,6 +401,11 @@ output "redshift_network_acl_arn" {
 # Elasticache Subnets
 ################################################################################
 
+output "elasticache_subnet_objects" {
+  description = "A list of all elasticache subnets, containing the full objects."
+  value       = aws_subnet.elasticache
+}
+
 output "elasticache_subnets" {
   description = "List of IDs of elasticache subnets"
   value       = aws_subnet.elasticache[*].id
@@ -423,6 +459,11 @@ output "elasticache_network_acl_arn" {
 ################################################################################
 # Intra Subnets
 ################################################################################
+
+output "intra_subnet_objects" {
+  description = "A list of all intra subnets, containing the full objects."
+  value       = aws_subnet.intra
+}
 
 output "intra_subnets" {
   description = "List of IDs of intra subnets"
@@ -481,6 +522,11 @@ output "nat_public_ips" {
 output "natgw_ids" {
   description = "List of NAT Gateway IDs"
   value       = aws_nat_gateway.this[*].id
+}
+
+output "natgw_interface_ids" {
+  description = "List of Network Interface IDs assigned to NAT Gateways"
+  value       = aws_nat_gateway.this[*].network_interface_id
 }
 
 ################################################################################
@@ -601,6 +647,11 @@ output "vpc_flow_log_destination_type" {
 output "vpc_flow_log_cloudwatch_iam_role_arn" {
   description = "The ARN of the IAM role used when pushing logs to Cloudwatch log group"
   value       = local.flow_log_iam_role_arn
+}
+
+output "vpc_flow_log_deliver_cross_account_role" {
+  description = "The ARN of the IAM role used when pushing logs cross account"
+  value       = try(aws_flow_log.this[0].deliver_cross_account_role, null)
 }
 
 ################################################################################
