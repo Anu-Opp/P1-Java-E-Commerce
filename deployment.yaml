@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
         - name: java-ecommerce
-          image: anuopp/java-ecommerce:v2
+          image: anuopp/java-ecommerce:v23
           ports:
             - containerPort: 8080
