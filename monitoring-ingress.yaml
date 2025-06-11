@@ -1,20 +1,29 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ecommerce-quick-ingress
+  name: monitoring-ingress
+  namespace: monitoring
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
 spec:
   ingressClassName: alb
   rules:
   - http:
       paths:
-      - path: /
+      - path: /grafana
         pathType: Prefix
         backend:
           service:
-            name: ecommerce-simple
+            name: monitoring-grafana
             port:
               number: 80
+      - path: /prometheus
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-kube-prometheus-prometheus
+            port:
+              name: http-web
