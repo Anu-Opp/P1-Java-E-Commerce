@@ -4,6 +4,8 @@ pipeline {
     environment {
         DOCKER_IMAGE = "anuopp/java-ecommerce"
         BUILD_TAG   = "v2.${env.BUILD_NUMBER}"
+        // Optional: expose WORKSPACE_QUOTED to avoid repeated quoting
+        WORKSPACE_QUOTED = '"$WORKSPACE"'
     }
 
     stages {
@@ -18,24 +20,33 @@ spec:
   containers:
   - name: git
     image: alpine/git:latest
-    command: [\"cat\"]
+    command: ["cat"]
     tty: true
     resources:
       requests:
-        cpu: \"100m\"
-        memory: \"128Mi\"
+        cpu: "100m"
+        memory: "128Mi"
       limits:
-        cpu: \"200m\"
-        memory: \"256Mi\"
+        cpu: "200m"
+        memory: "256Mi"
+  nodeSelector:
+    kubernetes.io/os: "linux"
+  restartPolicy: "Never"
 """
                 }
             }
             steps {
+                // The Git stage may emit JENKINS-30600 warning :contentReference[oaicite:9]{index=9}, but if checkout works, it can be ignored.
                 container('git') {
                     echo "🔄 Checking out dev branch..."
-                    git branch: 'dev',
-                        url: 'https://github.com/Anu-Opp/P1-Java-E-Commerce.git',
-                        credentialsId: 'github-credentials'
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/dev']],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/Anu-Opp/P1-Java-E-Commerce.git',
+                            credentialsId: 'github-credentials'
+                        ]]
+                    ])
                     stash includes: '**', name: 'source-code'
                 }
             }
@@ -52,21 +63,24 @@ spec:
   containers:
   - name: maven
     image: maven:3.8.6-eclipse-temurin-17
-    command: [\"cat\"]
+    command: ["cat"]
     tty: true
     volumeMounts:
     - name: maven-cache
       mountPath: /root/.m2
     resources:
       requests:
-        cpu: \"500m\"
-        memory: \"1Gi\"
+        cpu: "500m"
+        memory: "1Gi"
       limits:
-        cpu: \"1\"
-        memory: \"2Gi\"
+        cpu: "1"
+        memory: "2Gi"
   volumes:
   - name: maven-cache
     emptyDir: {}
+  nodeSelector:
+    kubernetes.io/os: "linux"
+  restartPolicy: "Never"
 """
                 }
             }
@@ -75,6 +89,7 @@ spec:
                     echo "🔨 Building Java application..."
                     unstash 'source-code'
                     sh 'mvn clean package -DskipTests'
+                    // Ensure Dockerfile, manifests are stashed for later stages
                     stash includes: 'target/*.jar,Dockerfile,deployment.yaml,service.yaml,ingress.yaml', name: 'build-artifacts'
                     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                 }
@@ -92,21 +107,24 @@ spec:
   containers:
   - name: maven
     image: maven:3.8.6-eclipse-temurin-17
-    command: [\"cat\"]
+    command: ["cat"]
     tty: true
     volumeMounts:
     - name: maven-cache
       mountPath: /root/.m2
     resources:
       requests:
-        cpu: \"500m\"
-        memory: \"1Gi\"
+        cpu: "500m"
+        memory: "1Gi"
       limits:
-        cpu: \"1\"
-        memory: \"2Gi\"
+        cpu: "1"
+        memory: "2Gi"
   volumes:
   - name: maven-cache
     emptyDir: {}
+  nodeSelector:
+    kubernetes.io/os: "linux"
+  restartPolicy: "Never"
 """
                 }
             }
@@ -139,21 +157,24 @@ spec:
   containers:
   - name: kaniko
     image: gcr.io/kaniko-project/executor:debug
-    command: [\"/busybox/cat\"]
+    command: ["/busybox/cat"]
     tty: true
     volumeMounts:
     - name: kaniko-config
       mountPath: /kaniko/.docker
     resources:
       requests:
-        cpu: \"500m\"
-        memory: \"1Gi\"
+        cpu: "300m"         # Reduced requests to fit typical node sizes
+        memory: "1Gi"
       limits:
-        cpu: \"1\"
-        memory: \"2Gi\"
+        cpu: "600m"
+        memory: "1.5Gi"
   volumes:
   - name: kaniko-config
     emptyDir: {}
+  nodeSelector:
+    kubernetes.io/os: "linux"
+  restartPolicy: "Never"
 """
                 }
             }
@@ -161,6 +182,13 @@ spec:
                 container('kaniko') {
                     echo "🐳 Building & pushing Docker image via Kaniko..."
                     unstash 'build-artifacts'
+                    // Print node resources if scheduling fails, for debugging:
+                    sh '''
+                      echo "===== Node resources for debugging ====="
+                      kubectl get nodes -o wide
+                      kubectl describe nodes | grep -A2 "Allocatable"
+                      echo "======================================="
+                    '''
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
                                                        usernameVariable: 'DOCKER_USER',
                                                        passwordVariable: 'DOCKER_PASS')]) {
@@ -169,9 +197,10 @@ spec:
                             cat <<EOF > /kaniko/.docker/config.json
 {"auths":{"https://index.docker.io/v1/":{"username":"$DOCKER_USER","password":"$DOCKER_PASS"}}}
 EOF
+                            # Quote context so spaces in WORKSPACE are handled
                             /kaniko/executor \
                               --dockerfile=Dockerfile \
-                              --context=$WORKSPACE \
+                              --context="$WORKSPACE" \
                               --destination=${DOCKER_IMAGE}:${BUILD_TAG} \
                               --destination=${DOCKER_IMAGE}:dev-latest \
                               --verbosity=info
@@ -182,6 +211,9 @@ EOF
         }
 
         stage('Deploy to Dev Environment') {
+            when {
+                expression { currentBuild.currentResult == 'SUCCESS' }
+            }
             agent {
                 kubernetes {
                     yaml """
@@ -192,15 +224,18 @@ spec:
   containers:
   - name: kubectl
     image: bitnami/kubectl:1.28
-    command: [\"cat\"]
+    command: ["cat"]
     tty: true
     resources:
       requests:
-        cpu: \"100m\"
-        memory: \"128Mi\"
+        cpu: "100m"
+        memory: "128Mi"
       limits:
-        cpu: \"200m\"
-        memory: \"256Mi\"
+        cpu: "200m"
+        memory: "256Mi"
+  nodeSelector:
+    kubernetes.io/os: "linux"
+  restartPolicy: "Never"
 """
                 }
             }
@@ -210,6 +245,7 @@ spec:
                     unstash 'build-artifacts'
                     sh """
                         kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+                        # Update image in deployment.yaml; ensure sed handles paths correctly
                         sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${BUILD_TAG}|g' deployment.yaml
                         kubectl apply -f deployment.yaml -n dev
                         kubectl apply -f service.yaml -n dev
@@ -221,6 +257,9 @@ spec:
         }
 
         stage('Health Check & Verification') {
+            when {
+                expression { currentBuild.currentResult == 'SUCCESS' }
+            }
             agent {
                 kubernetes {
                     yaml """
@@ -231,15 +270,18 @@ spec:
   containers:
   - name: kubectl
     image: bitnami/kubectl:1.28
-    command: [\"cat\"]
+    command: ["cat"]
     tty: true
     resources:
       requests:
-        cpu: \"100m\"
-        memory: \"128Mi\"
+        cpu: "100m"
+        memory: "128Mi"
       limits:
-        cpu: \"200m\"
-        memory: \"256Mi\"
+        cpu: "200m"
+        memory: "256Mi"
+  nodeSelector:
+    kubernetes.io/os: "linux"
+  restartPolicy: "Never"
 """
                 }
             }
@@ -273,7 +315,7 @@ spec:
             echo "🎉 SUCCESS: Image ${DOCKER_IMAGE}:${BUILD_TAG} pushed and deployed"
         }
         failure {
-            echo "❌ FAILURE: Check above logs"
+            echo "❌ FAILURE: Check above logs for details"
         }
     }
 }
