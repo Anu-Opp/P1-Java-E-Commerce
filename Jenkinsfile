@@ -6,12 +6,14 @@ pipeline {
         BUILD_TAG = "v2.${env.BUILD_NUMBER}"
         KUBE_NAMESPACE = "dev"
         KUBE_CONTEXT = "your-eks-cluster-name"  // Update with your EKS cluster name
+        MAVEN_OPTS = "-Duser.home=/tmp"
     }
 
     options {
         timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
         disableConcurrentBuilds()
+        skipDefaultCheckout(true)  // We'll handle checkout manually
     }
 
     stages {
@@ -28,6 +30,9 @@ spec:
     image: alpine/git:latest
     command: ["cat"]
     tty: true
+    securityContext:
+      runAsUser: 1000
+      fsGroup: 1000
     resources:
       requests:
         cpu: "100m"
@@ -35,6 +40,21 @@ spec:
       limits:
         cpu: "200m"
         memory: "256Mi"
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+  - name: jnlp
+    image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    volumeMounts:
+    - name: workspace
+      mountPath: /home/jenkins/agent
+  volumes:
+  - name: workspace
+    emptyDir: {}
   nodeSelector:
     kubernetes.io/os: "linux"
   restartPolicy: "Never"
@@ -49,6 +69,7 @@ spec:
                         branches: [[name: '*/dev']],
                         extensions: [
                             [$class: 'CleanBeforeCheckout'],
+                            [$class: 'RelativeTargetDirectory', relativeTargetDir: 'src'],
                             [$class: 'CloneOption', depth: 1, shallow: true]
                         ],
                         userRemoteConfigs: [[
@@ -56,7 +77,9 @@ spec:
                             credentialsId: 'github-credentials'
                         ]]
                     ])
-                    stash includes: '**', name: 'source-code', useDefaultExcludes: false
+                    dir('src') {
+                        stash includes: '**', name: 'source-code', useDefaultExcludes: false
+                    }
                 }
             }
         }
@@ -74,9 +97,14 @@ spec:
     image: maven:3.8.6-eclipse-temurin-17
     command: ["cat"]
     tty: true
+    securityContext:
+      runAsUser: 1000
+      fsGroup: 1000
     volumeMounts:
     - name: maven-cache
       mountPath: /root/.m2
+    - name: workspace
+      mountPath: /workspace
     resources:
       requests:
         cpu: "500m"
@@ -84,8 +112,19 @@ spec:
       limits:
         cpu: "1"
         memory: "2Gi"
+  - name: jnlp
+    image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    volumeMounts:
+    - name: workspace
+      mountPath: /home/jenkins/agent
   volumes:
   - name: maven-cache
+    emptyDir: {}
+  - name: workspace
     emptyDir: {}
   nodeSelector:
     kubernetes.io/os: "linux"
@@ -97,9 +136,11 @@ spec:
                 container('maven') {
                     echo "🔨 Building Java application..."
                     unstash 'source-code'
-                    sh 'mvn clean package -DskipTests'
-                    stash includes: 'target/*.jar,Dockerfile,deployment.yaml,service.yaml,ingress.yaml', name: 'build-artifacts'
-                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                    dir('src') {
+                        sh 'mvn clean package -DskipTests'
+                        stash includes: 'target/*.jar,Dockerfile,deployment.yaml,service.yaml,ingress.yaml', name: 'build-artifacts'
+                        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                    }
                 }
             }
         }
@@ -117,9 +158,14 @@ spec:
     image: maven:3.8.6-eclipse-temurin-17
     command: ["cat"]
     tty: true
+    securityContext:
+      runAsUser: 1000
+      fsGroup: 1000
     volumeMounts:
     - name: maven-cache
       mountPath: /root/.m2
+    - name: workspace
+      mountPath: /workspace
     resources:
       requests:
         cpu: "500m"
@@ -127,8 +173,19 @@ spec:
       limits:
         cpu: "1"
         memory: "2Gi"
+  - name: jnlp
+    image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    volumeMounts:
+    - name: workspace
+      mountPath: /home/jenkins/agent
   volumes:
   - name: maven-cache
+    emptyDir: {}
+  - name: workspace
     emptyDir: {}
   nodeSelector:
     kubernetes.io/os: "linux"
@@ -140,57 +197,15 @@ spec:
                 container('maven') {
                     echo "🧪 Running unit tests..."
                     unstash 'source-code'
-                    sh 'mvn test'
+                    dir('src') {
+                        sh 'mvn test'
+                    }
                 }
             }
             post {
                 always {
-                    junit 'target/surefire-reports/*.xml'
-                    archiveArtifacts artifacts: 'target/surefire-reports/*.xml', allowEmptyArchive: true
-                }
-            }
-        }
-
-        stage('Verify Cluster Access') {
-            agent {
-                kubernetes {
-                    yaml """
-apiVersion: v1
-kind: Pod
-spec:
-  serviceAccountName: jenkins
-  containers:
-  - name: kubectl
-    image: bitnami/kubectl:1.28
-    command: ["cat"]
-    tty: true
-    resources:
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-      limits:
-        cpu: "200m"
-        memory: "256Mi"
-  nodeSelector:
-    kubernetes.io/os: "linux"
-  restartPolicy: "Never"
-"""
-                }
-            }
-            steps {
-                container('kubectl') {
-                    echo "🔍 Verifying cluster access..."
-                    script {
-                        try {
-                            sh """
-                                kubectl config use-context ${KUBE_CONTEXT}
-                                kubectl get nodes
-                                kubectl get ns ${KUBE_NAMESPACE} || kubectl create ns ${KUBE_NAMESPACE}
-                            """
-                        } catch (err) {
-                            error("Cluster access verification failed: ${err}")
-                        }
-                    }
+                    junit 'src/target/surefire-reports/*.xml'
+                    archiveArtifacts artifacts: 'src/target/surefire-reports/*.xml', allowEmptyArchive: true
                 }
             }
         }
@@ -208,11 +223,14 @@ spec:
     image: gcr.io/kaniko-project/executor:debug
     command: ["/busybox/cat"]
     tty: true
+    securityContext:
+      runAsUser: 1000
+      fsGroup: 1000
     volumeMounts:
     - name: kaniko-config
       mountPath: /kaniko/.docker
-    - name: docker-config
-      mountPath: /kaniko/.docker
+    - name: workspace
+      mountPath: /workspace
     resources:
       requests:
         cpu: "500m"
@@ -220,10 +238,19 @@ spec:
       limits:
         cpu: "1"
         memory: "2Gi"
+  - name: jnlp
+    image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    volumeMounts:
+    - name: workspace
+      mountPath: /home/jenkins/agent
   volumes:
   - name: kaniko-config
     emptyDir: {}
-  - name: docker-config
+  - name: workspace
     emptyDir: {}
   nodeSelector:
     kubernetes.io/os: "linux"
@@ -245,7 +272,7 @@ spec:
                             echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"$DOCKER_USER\",\"password\":\"$DOCKER_PASS\"}}}" > /kaniko/.docker/config.json
                             /kaniko/executor \
                                 --dockerfile=Dockerfile \
-                                --context="$WORKSPACE" \
+                                --context=/workspace/src \
                                 --destination=${DOCKER_IMAGE}:${BUILD_TAG} \
                                 --destination=${DOCKER_IMAGE}:dev-latest \
                                 --cache=true \
@@ -269,6 +296,12 @@ spec:
     image: bitnami/kubectl:1.28
     command: ["cat"]
     tty: true
+    securityContext:
+      runAsUser: 1000
+      fsGroup: 1000
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
     resources:
       requests:
         cpu: "500m"
@@ -276,6 +309,18 @@ spec:
       limits:
         cpu: "1"
         memory: "1Gi"
+  - name: jnlp
+    image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    volumeMounts:
+    - name: workspace
+      mountPath: /home/jenkins/agent
+  volumes:
+  - name: workspace
+    emptyDir: {}
   nodeSelector:
     kubernetes.io/os: "linux"
   restartPolicy: "Never"
@@ -286,33 +331,25 @@ spec:
                 container('kubectl') {
                     echo "🚀 Deploying to ${KUBE_NAMESPACE} namespace..."
                     unstash 'build-artifacts'
-                    script {
-                        try {
-                            sh """
-                                kubectl config use-context ${KUBE_CONTEXT}
-                                kubectl config set-context --current --namespace=${KUBE_NAMESPACE}
-                                
-                                # Update deployment with new image
-                                sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${BUILD_TAG}|g' deployment.yaml
-                                
-                                # Apply Kubernetes manifests
-                                kubectl apply -f deployment.yaml -n ${KUBE_NAMESPACE}
-                                kubectl apply -f service.yaml -n ${KUBE_NAMESPACE}
-                                kubectl apply -f ingress.yaml -n ${KUBE_NAMESPACE} || true
-                                
-                                # Wait for rollout
-                                kubectl rollout status deployment/ecommerce-deployment -n ${KUBE_NAMESPACE} --timeout=300s
-                                
-                                # Verify deployment
-                                kubectl get pods -n ${KUBE_NAMESPACE} -l app=ecommerce
-                            """
-                        } catch (err) {
-                            // Capture diagnostic information
-                            sh """
-                                kubectl describe deployment ecommerce-deployment -n ${KUBE_NAMESPACE} || true
-                                kubectl get events -n ${KUBE_NAMESPACE} --sort-by='.metadata.creationTimestamp' || true
-                            """
-                            error("Deployment failed: ${err}")
+                    dir('src') {
+                        script {
+                            try {
+                                sh """
+                                    kubectl config use-context ${KUBE_CONTEXT}
+                                    kubectl create namespace ${KUBE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                                    sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${BUILD_TAG}|g' deployment.yaml
+                                    kubectl apply -f deployment.yaml -n ${KUBE_NAMESPACE}
+                                    kubectl apply -f service.yaml -n ${KUBE_NAMESPACE}
+                                    kubectl apply -f ingress.yaml -n ${KUBE_NAMESPACE} || true
+                                    kubectl rollout status deployment/ecommerce-deployment -n ${KUBE_NAMESPACE} --timeout=300s
+                                """
+                            } catch (err) {
+                                sh """
+                                    kubectl describe deployment ecommerce-deployment -n ${KUBE_NAMESPACE} || true
+                                    kubectl get events -n ${KUBE_NAMESPACE} --sort-by='.metadata.creationTimestamp' || true
+                                """
+                                error("Deployment failed: ${err}")
+                            }
                         }
                     }
                 }
@@ -332,6 +369,12 @@ spec:
     image: curlimages/curl:latest
     command: ["cat"]
     tty: true
+    securityContext:
+      runAsUser: 1000
+      fsGroup: 1000
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
     resources:
       requests:
         cpu: "100m"
@@ -339,6 +382,18 @@ spec:
       limits:
         cpu: "200m"
         memory: "256Mi"
+  - name: jnlp
+    image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    volumeMounts:
+    - name: workspace
+      mountPath: /home/jenkins/agent
+  volumes:
+  - name: workspace
+    emptyDir: {}
   nodeSelector:
     kubernetes.io/os: "linux"
   restartPolicy: "Never"
@@ -371,18 +426,7 @@ spec:
                                 echo "✅ Application is healthy!"
                             }
                         } else {
-                            echo "⚠️ Ingress host not available yet"
-                            sleep(time: 30, unit: 'SECONDS')
-                            // Try one more time
-                            ingressHost = sh(
-                                script: """
-                                    kubectl get ingress ecommerce-dev-ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
-                                """,
-                                returnStdout: true
-                            ).trim()
-                            if (!ingressHost) {
-                                error("Ingress host not available after waiting")
-                            }
+                            error("Ingress host not available")
                         }
                     }
                 }
@@ -393,21 +437,16 @@ spec:
     post {
         always {
             echo "🧹 Pipeline finished - Status: ${currentBuild.currentResult}"
-            cleanWs()
+            script {
+                // Clean up workspace if needed
+                cleanWs(cleanWhenAborted: true, cleanWhenFailure: true, cleanWhenNotBuilt: true, cleanWhenUnstable: true)
+            }
         }
         success {
             echo "🎉 SUCCESS: Image ${DOCKER_IMAGE}:${BUILD_TAG} pushed and deployed to ${KUBE_NAMESPACE}"
-            slackSend(
-                color: 'good',
-                message: "SUCCESS: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})"
-            )
         }
         failure {
             echo "❌ FAILURE: Check above logs for details"
-            slackSend(
-                color: 'danger',
-                message: "FAILED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})"
-            )
         }
         unstable {
             echo "⚠️ UNSTABLE: Tests failed but deployment succeeded"
