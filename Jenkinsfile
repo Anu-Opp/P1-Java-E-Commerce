@@ -116,31 +116,24 @@ pipeline {
                         spec:
                           containers:
                           - name: docker
-                            image: docker:24-dind
-                            securityContext:
-                              privileged: true
-                            env:
-                            - name: DOCKER_TLS_CERTDIR
-                              value: ""
-                          - name: docker-client
                             image: docker:24-cli
-                            command:
-                            - cat
+                            command: [cat]
                             tty: true
-                            env:
-                            - name: DOCKER_HOST
-                              value: tcp://localhost:2376
-                            - name: DOCKER_TLS_VERIFY
-                              value: ""
+                            volumeMounts:
+                            - name: docker-sock
+                              mountPath: /var/run/docker.sock
+                          volumes:
+                          - name: docker-sock
+                            hostPath:
+                              path: /var/run/docker.sock
                     """
                 }
             }
             steps {
-                container('docker-client') {
-                    echo "�� Building Docker image..."
+                container('docker') {
+                    echo "🐳 Building Docker image..."
                     unstash 'build-artifacts'
                     script {
-                        sh 'sleep 15'  // Wait for Docker daemon
                         sh """
                             docker build -t ${DOCKER_IMAGE}:${BUILD_TAG} .
                             docker tag ${DOCKER_IMAGE}:${BUILD_TAG} ${DOCKER_IMAGE}:dev-latest
@@ -160,36 +153,29 @@ pipeline {
                         spec:
                           containers:
                           - name: docker
-                            image: docker:24-dind
-                            securityContext:
-                              privileged: true
-                            env:
-                            - name: DOCKER_TLS_CERTDIR
-                              value: ""
-                          - name: docker-client
                             image: docker:24-cli
-                            command:
-                            - cat
+                            command: [cat]
                             tty: true
-                            env:
-                            - name: DOCKER_HOST
-                              value: tcp://localhost:2376
-                            - name: DOCKER_TLS_VERIFY
-                              value: ""
+                            volumeMounts:
+                            - name: docker-sock
+                              mountPath: /var/run/docker.sock
+                          volumes:
+                          - name: docker-sock
+                            hostPath:
+                              path: /var/run/docker.sock
                     """
                 }
             }
             steps {
-                container('docker-client') {
+                container('docker') {
                     echo "📤 Pushing Docker image to DockerHub..."
                     unstash 'build-artifacts'
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
                                                    passwordVariable: 'PASS', 
                                                    usernameVariable: 'USER')]) {
                         script {
-                            sh 'sleep 15'
                             sh """
-                                # Rebuild in this pod
+                                # Rebuild image (new pod)
                                 docker build -t ${DOCKER_IMAGE}:${BUILD_TAG} .
                                 docker tag ${DOCKER_IMAGE}:${BUILD_TAG} ${DOCKER_IMAGE}:dev-latest
                                 
@@ -329,7 +315,10 @@ pipeline {
         failure {
             echo "❌ FAILURE: CI/CD pipeline failed!"
             echo "📧 Check console output above for detailed error information"
+            echo "🔧 Common fixes:"
+            echo "   - Verify DockerHub credentials are correct"
+            echo "   - Check Jenkins service account permissions"
+            echo "   - Ensure all files are committed to GitHub"
         }
     }
 }
-
