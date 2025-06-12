@@ -1,4 +1,3 @@
-.terraform/
 target/
 .terraform/
 *.class
