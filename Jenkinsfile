@@ -43,7 +43,7 @@ pipeline {
                         spec:
                           containers:
                           - name: maven
-                            image: maven:3.8.6-openjdk-17
+                            image: maven:3.9-openjdk-17
                             command:
                             - cat
                             tty: true
@@ -76,7 +76,7 @@ pipeline {
                         spec:
                           containers:
                           - name: maven
-                            image: maven:3.8.6-openjdk-17
+                            image: maven:3.9-openjdk-17
                             command:
                             - cat
                             tty: true
@@ -137,7 +137,7 @@ pipeline {
             }
             steps {
                 container('docker-client') {
-                    echo "🐳 Building Docker image..."
+                    echo "�� Building Docker image..."
                     unstash 'build-artifacts'
                     script {
                         sh 'sleep 15'  // Wait for Docker daemon
@@ -181,7 +181,7 @@ pipeline {
             }
             steps {
                 container('docker-client') {
-                    echo "�� Pushing Docker image to DockerHub..."
+                    echo "📤 Pushing Docker image to DockerHub..."
                     unstash 'build-artifacts'
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
                                                    passwordVariable: 'PASS', 
@@ -236,7 +236,6 @@ pipeline {
                             
                             # Update deployment with new image
                             sed -i 's|image: anuopp/java-ecommerce:.*|image: ${DOCKER_IMAGE}:${BUILD_TAG}|g' deployment.yaml
-                            sed -i 's|PLACEHOLDER|${BUILD_NUMBER}|g' deployment.yaml
                             
                             # Apply manifests
                             kubectl apply -f deployment.yaml -n dev
@@ -330,10 +329,7 @@ pipeline {
         failure {
             echo "❌ FAILURE: CI/CD pipeline failed!"
             echo "📧 Check console output above for detailed error information"
-            echo "🔧 Common fixes:"
-            echo "   - Verify DockerHub credentials are correct"
-            echo "   - Check Jenkins service account permissions"
-            echo "   - Ensure all files are committed to GitHub"
         }
     }
 }
+
