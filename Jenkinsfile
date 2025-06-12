@@ -107,7 +107,7 @@ pipeline {
             }
         }
         
-        stage('Build Docker Image') {
+        stage('Build & Push Docker Image') {
             agent {
                 kubernetes {
                     yaml """
@@ -115,79 +115,49 @@ pipeline {
                         kind: Pod
                         spec:
                           containers:
-                          - name: docker
-                            image: docker:24-cli
-                            command: [cat]
+                          - name: kaniko
+                            image: gcr.io/kaniko-project/executor:debug
+                            command: ["/busybox/cat"]
                             tty: true
                             volumeMounts:
-                            - name: docker-sock
-                              mountPath: /var/run/docker.sock
+                            - name: kaniko-secret
+                              mountPath: /kaniko/.docker
                           volumes:
-                          - name: docker-sock
-                            hostPath:
-                              path: /var/run/docker.sock
+                          - name: kaniko-secret
+                            secret:
+                              secretName: dockerhub-secret
+                              items:
+                              - key: .dockerconfigjson
+                                path: config.json
                     """
                 }
             }
             steps {
-                container('docker') {
-                    echo "🐳 Building Docker image..."
+                container('kaniko') {
+                    echo "🐳 Building and pushing Docker image with Kaniko..."
                     unstash 'build-artifacts'
-                    script {
-                        sh """
-                            docker build -t ${DOCKER_IMAGE}:${BUILD_TAG} .
-                            docker tag ${DOCKER_IMAGE}:${BUILD_TAG} ${DOCKER_IMAGE}:dev-latest
-                            echo "✅ Built: ${DOCKER_IMAGE}:${BUILD_TAG}"
-                        """
-                    }
-                }
-            }
-        }
-        
-        stage('Push Docker Image') {
-            agent {
-                kubernetes {
-                    yaml """
-                        apiVersion: v1
-                        kind: Pod
-                        spec:
-                          containers:
-                          - name: docker
-                            image: docker:24-cli
-                            command: [cat]
-                            tty: true
-                            volumeMounts:
-                            - name: docker-sock
-                              mountPath: /var/run/docker.sock
-                          volumes:
-                          - name: docker-sock
-                            hostPath:
-                              path: /var/run/docker.sock
-                    """
-                }
-            }
-            steps {
-                container('docker') {
-                    echo "📤 Pushing Docker image to DockerHub..."
-                    unstash 'build-artifacts'
+                    
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
-                                                   passwordVariable: 'PASS', 
-                                                   usernameVariable: 'USER')]) {
+                                                   passwordVariable: 'DOCKER_PASS', 
+                                                   usernameVariable: 'DOCKER_USER')]) {
                         script {
-                            sh """
-                                # Rebuild image (new pod)
-                                docker build -t ${DOCKER_IMAGE}:${BUILD_TAG} .
-                                docker tag ${DOCKER_IMAGE}:${BUILD_TAG} ${DOCKER_IMAGE}:dev-latest
+                            sh '''
+                                # Create Docker config for Kaniko
+                                echo "{\\"auths\\":{\\"https://index.docker.io/v1/\\":{\\"username\\":\\"$DOCKER_USER\\",\\"password\\":\\"$DOCKER_PASS\\"}}}" > /kaniko/.docker/config.json
                                 
-                                # Login and push
-                                echo \$PASS | docker login -u \$USER --password-stdin
-                                docker push ${DOCKER_IMAGE}:${BUILD_TAG}
-                                docker push ${DOCKER_IMAGE}:dev-latest
+                                # Build and push with Kaniko
+                                /kaniko/executor \
+                                  --dockerfile=Dockerfile \
+                                  --context=. \
+                                  --destination=${DOCKER_IMAGE}:${BUILD_TAG} \
+                                  --destination=${DOCKER_IMAGE}:dev-latest \
+                                  --cache=true \
+                                  --verbosity=info
                                 
-                                echo "✅ Successfully pushed:"
+                                echo "✅ Successfully built and pushed:"
                                 echo "   - ${DOCKER_IMAGE}:${BUILD_TAG}"
                                 echo "   - ${DOCKER_IMAGE}:dev-latest"
-                            """
+                            '''
                         }
                     }
                 }
@@ -315,10 +285,6 @@ pipeline {
         failure {
             echo "❌ FAILURE: CI/CD pipeline failed!"
             echo "📧 Check console output above for detailed error information"
-            echo "🔧 Common fixes:"
-            echo "   - Verify DockerHub credentials are correct"
-            echo "   - Check Jenkins service account permissions"
-            echo "   - Ensure all files are committed to GitHub"
         }
     }
 }
