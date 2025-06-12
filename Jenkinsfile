@@ -170,8 +170,8 @@ pipeline {
                                 kubectl scale deployment java-ecommerce -n default --replicas=0 || echo "Scale down failed"
                                 sleep 10
                                 
-                                # Create or update deployment with optimized resources
-                                echo "🔄 Creating/updating deployment with optimized configuration..."
+                                # Create or update deployment with correct labels
+                                echo "🔄 Creating/updating deployment with correct label configuration..."
                                 kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -179,16 +179,16 @@ metadata:
   name: java-ecommerce
   namespace: default
   labels:
-    app: java-ecommerce
+    app: ecommerce
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: java-ecommerce
+      app: ecommerce
   template:
     metadata:
       labels:
-        app: java-ecommerce
+        app: ecommerce
     spec:
       containers:
       - name: java-ecommerce
@@ -245,7 +245,7 @@ metadata:
   namespace: default
 spec:
   selector:
-    app: java-ecommerce
+    app: ecommerce
   ports:
     - protocol: TCP
       port: 80
@@ -282,41 +282,11 @@ spec:
 EOF
                                 fi
                                 
-                                # Smart rollout wait with better error handling
+                                # Wait for rollout to complete with correct labels
                                 echo "⏳ Waiting for deployment rollout..."
-                                ROLLOUT_SUCCESS=false
-                                for i in {1..6}; do
-                                    echo "🔄 Rollout attempt \$i/6..."
-                                    if kubectl rollout status deployment/java-ecommerce -n default --timeout=60s; then
-                                        ROLLOUT_SUCCESS=true
-                                        break
-                                    else
-                                        echo "⚠️ Rollout timeout on attempt \$i, checking pod status..."
-                                        kubectl get pods -n default -l app=java-ecommerce -o wide
-                                        
-                                        # Check if pods are actually running
-                                        RUNNING_PODS=\$(kubectl get pods -n default -l app=java-ecommerce --field-selector=status.phase=Running -o name | wc -l)
-                                        if [ "\$RUNNING_PODS" -gt 0 ]; then
-                                            echo "✅ Pods are running despite rollout timeout!"
-                                            ROLLOUT_SUCCESS=true
-                                            break
-                                        fi
-                                        
-                                        if [ \$i -lt 6 ]; then
-                                            echo "⏳ Waiting 30s before next attempt..."
-                                            sleep 30
-                                        fi
-                                    fi
-                                done
+                                kubectl rollout status deployment/java-ecommerce -n default --timeout=300s
                                 
-                                if [ "\$ROLLOUT_SUCCESS" = false ]; then
-                                    echo "❌ Rollout failed after all attempts. Checking pod details..."
-                                    kubectl describe pods -n default -l app=java-ecommerce | tail -30
-                                    kubectl get events -n default --sort-by='.lastTimestamp' | tail -10
-                                    exit 1
-                                fi
-                                
-                                # Final comprehensive status check
+                                echo ""
                                 echo "📊 Final Production Deployment Status:"
                                 echo "════════════════════════════════════════════"
                                 
@@ -327,7 +297,7 @@ EOF
                                 # Pod status with detailed info
                                 echo ""
                                 echo "📦 Pod Status:"
-                                kubectl get pods -n default -l app=java-ecommerce -o wide
+                                kubectl get pods -n default -l app=ecommerce -o wide
                                 
                                 # Service status
                                 echo ""
@@ -350,7 +320,7 @@ EOF
                                 # Health check with detailed output
                                 echo ""
                                 echo "🏥 Application Health Check:"
-                                POD_NAME=\$(kubectl get pods -n default -l app=java-ecommerce -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "none")
+                                POD_NAME=\$(kubectl get pods -n default -l app=ecommerce -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "none")
                                 if [ "\$POD_NAME" != "none" ]; then
                                     POD_STATUS=\$(kubectl get pod \$POD_NAME -n default -o jsonpath='{.status.phase}')
                                     echo "   Pod Name: \$POD_NAME"
