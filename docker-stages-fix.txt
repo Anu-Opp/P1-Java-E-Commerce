@@ -1,0 +1,86 @@
+Replace both Docker stages with these improved versions:
+
+stage('Build Docker Image') {
+    agent {
+        kubernetes {
+            yaml """
+                apiVersion: v1
+                kind: Pod
+                spec:
+                  containers:
+                  - name: docker
+                    image: docker:24-cli
+                    command: [cat]
+                    tty: true
+                    volumeMounts:
+                    - name: docker-sock
+                      mountPath: /var/run/docker.sock
+                  volumes:
+                  - name: docker-sock
+                    hostPath:
+                      path: /var/run/docker.sock
+            """
+        }
+    }
+    steps {
+        container('docker') {
+            echo "🐳 Building Docker image..."
+            unstash 'build-artifacts'
+            script {
+                sh """
+                    docker build -t ${DOCKER_IMAGE}:${BUILD_TAG} .
+                    docker tag ${DOCKER_IMAGE}:${BUILD_TAG} ${DOCKER_IMAGE}:dev-latest
+                    echo "✅ Built: ${DOCKER_IMAGE}:${BUILD_TAG}"
+                """
+            }
+        }
+    }
+}
+
+stage('Push Docker Image') {
+    agent {
+        kubernetes {
+            yaml """
+                apiVersion: v1
+                kind: Pod
+                spec:
+                  containers:
+                  - name: docker
+                    image: docker:24-cli
+                    command: [cat]
+                    tty: true
+                    volumeMounts:
+                    - name: docker-sock
+                      mountPath: /var/run/docker.sock
+                  volumes:
+                  - name: docker-sock
+                    hostPath:
+                      path: /var/run/docker.sock
+            """
+        }
+    }
+    steps {
+        container('docker') {
+            echo "📤 Pushing Docker image..."
+            unstash 'build-artifacts'
+            withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
+                                           passwordVariable: 'PASS', 
+                                           usernameVariable: 'USER')]) {
+                script {
+                    sh """
+                        # Rebuild image (new pod)
+                        docker build -t ${DOCKER_IMAGE}:${BUILD_TAG} .
+                        docker tag ${DOCKER_IMAGE}:${BUILD_TAG} ${DOCKER_IMAGE}:dev-latest
+                        
+                        # Login and push
+                        echo \$PASS | docker login -u \$USER --password-stdin
+                        docker push ${DOCKER_IMAGE}:${BUILD_TAG}
+                        docker push ${DOCKER_IMAGE}:dev-latest
+                        
+                        echo "✅ Successfully pushed: ${DOCKER_IMAGE}:${BUILD_TAG}"
+                    """
+                }
+            }
+        }
+    }
+}
