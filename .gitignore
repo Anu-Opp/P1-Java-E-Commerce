@@ -1,1 +1,4 @@
 .terraform/
+target/
+.terraform/
+*.class
