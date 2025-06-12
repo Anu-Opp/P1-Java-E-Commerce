@@ -2,18 +2,18 @@ pipeline {
     agent none
 
     environment {
-        DOCKER_IMAGE = "anuopp/java-ecommerce"
-        BUILD_TAG = "v2.${env.BUILD_NUMBER}"
+        DOCKER_IMAGE   = "anuopp/java-ecommerce"
+        BUILD_TAG      = "v2.${env.BUILD_NUMBER}"
         KUBE_NAMESPACE = "dev"
-        KUBE_CONTEXT = "your-eks-cluster-name"  // Update with your EKS cluster name
-        MAVEN_OPTS = "-Duser.home=/tmp"
+        // KUBE_CONTEXT not needed for in-cluster kubectl
+        MAVEN_OPTS     = "-Duser.home=/root"  // use default home; PVC mounted at /root/.m2
     }
 
     options {
         timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
         disableConcurrentBuilds()
-        skipDefaultCheckout(true)  // We'll handle checkout manually
+        skipDefaultCheckout(true)
     }
 
     stages {
@@ -35,11 +35,11 @@ spec:
       fsGroup: 1000
     resources:
       requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
         cpu: "100m"
         memory: "128Mi"
-      limits:
-        cpu: "200m"
-        memory: "256Mi"
     volumeMounts:
     - name: workspace
       mountPath: /workspace
@@ -47,8 +47,8 @@ spec:
     image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
     resources:
       requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "50m"
+        memory: "64Mi"
     volumeMounts:
     - name: workspace
       mountPath: /home/jenkins/agent
@@ -64,6 +64,7 @@ spec:
             steps {
                 container('git') {
                     echo "🔄 Checking out dev branch..."
+                    // checkout into 'src' directory
                     checkout([
                         $class: 'GitSCM',
                         branches: [[name: '*/dev']],
@@ -107,23 +108,24 @@ spec:
       mountPath: /workspace
     resources:
       requests:
+        cpu: "300m"
+        memory: "512Mi"
+      limits:
         cpu: "500m"
         memory: "1Gi"
-      limits:
-        cpu: "1"
-        memory: "2Gi"
   - name: jnlp
     image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
     resources:
       requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "50m"
+        memory: "64Mi"
     volumeMounts:
     - name: workspace
       mountPath: /home/jenkins/agent
   volumes:
   - name: maven-cache
-    emptyDir: {}
+    persistentVolumeClaim:
+      claimName: jenkins-maven-cache
   - name: workspace
     emptyDir: {}
   nodeSelector:
@@ -168,23 +170,24 @@ spec:
       mountPath: /workspace
     resources:
       requests:
+        cpu: "300m"
+        memory: "512Mi"
+      limits:
         cpu: "500m"
         memory: "1Gi"
-      limits:
-        cpu: "1"
-        memory: "2Gi"
   - name: jnlp
     image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
     resources:
       requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "50m"
+        memory: "64Mi"
     volumeMounts:
     - name: workspace
       mountPath: /home/jenkins/agent
   volumes:
   - name: maven-cache
-    emptyDir: {}
+    persistentVolumeClaim:
+      claimName: jenkins-maven-cache
   - name: workspace
     emptyDir: {}
   nodeSelector:
@@ -233,17 +236,17 @@ spec:
       mountPath: /workspace
     resources:
       requests:
-        cpu: "500m"
-        memory: "1Gi"
+        cpu: "300m"
+        memory: "800Mi"
       limits:
-        cpu: "1"
-        memory: "2Gi"
+        cpu: "600m"
+        memory: "1.2Gi"
   - name: jnlp
     image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
     resources:
       requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "50m"
+        memory: "64Mi"
     volumeMounts:
     - name: workspace
       mountPath: /home/jenkins/agent
@@ -269,10 +272,12 @@ spec:
                     )]) {
                         sh '''
                             mkdir -p /kaniko/.docker
-                            echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"$DOCKER_USER\",\"password\":\"$DOCKER_PASS\"}}}" > /kaniko/.docker/config.json
+                            cat <<EOF > /kaniko/.docker/config.json
+{"auths":{"https://index.docker.io/v1/":{"username":"$DOCKER_USER","password":"$DOCKER_PASS"}}}
+EOF
                             /kaniko/executor \
                                 --dockerfile=Dockerfile \
-                                --context=/workspace/src \
+                                --context="/workspace/src" \
                                 --destination=${DOCKER_IMAGE}:${BUILD_TAG} \
                                 --destination=${DOCKER_IMAGE}:dev-latest \
                                 --cache=true \
@@ -304,17 +309,17 @@ spec:
       mountPath: /workspace
     resources:
       requests:
-        cpu: "500m"
-        memory: "512Mi"
+        cpu: "50m"
+        memory: "64Mi"
       limits:
-        cpu: "1"
-        memory: "1Gi"
+        cpu: "100m"
+        memory: "128Mi"
   - name: jnlp
     image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
     resources:
       requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "50m"
+        memory: "64Mi"
     volumeMounts:
     - name: workspace
       mountPath: /home/jenkins/agent
@@ -335,7 +340,7 @@ spec:
                         script {
                             try {
                                 sh """
-                                    kubectl config use-context ${KUBE_CONTEXT}
+                                    # In-cluster kubectl uses Pod's serviceAccount, no need use-context
                                     kubectl create namespace ${KUBE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
                                     sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${BUILD_TAG}|g' deployment.yaml
                                     kubectl apply -f deployment.yaml -n ${KUBE_NAMESPACE}
@@ -377,17 +382,17 @@ spec:
       mountPath: /workspace
     resources:
       requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
         cpu: "100m"
         memory: "128Mi"
-      limits:
-        cpu: "200m"
-        memory: "256Mi"
   - name: jnlp
     image: jenkins/inbound-agent:3309.v27b_9314fd1a_4-1
     resources:
       requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "50m"
+        memory: "64Mi"
     volumeMounts:
     - name: workspace
       mountPath: /home/jenkins/agent
@@ -437,10 +442,7 @@ spec:
     post {
         always {
             echo "🧹 Pipeline finished - Status: ${currentBuild.currentResult}"
-            script {
-                // Clean up workspace if needed
-                cleanWs(cleanWhenAborted: true, cleanWhenFailure: true, cleanWhenNotBuilt: true, cleanWhenUnstable: true)
-            }
+            cleanWs(cleanWhenAborted: true, cleanWhenFailure: true, cleanWhenNotBuilt: true, cleanWhenUnstable: true)
         }
         success {
             echo "🎉 SUCCESS: Image ${DOCKER_IMAGE}:${BUILD_TAG} pushed and deployed to ${KUBE_NAMESPACE}"
