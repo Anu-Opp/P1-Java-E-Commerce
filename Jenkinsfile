@@ -1,26 +1,33 @@
 pipeline {
     agent none
-    
+
     environment {
         DOCKER_IMAGE = "anuopp/java-ecommerce"
-        BUILD_TAG = "v2.${env.BUILD_NUMBER}"
+        BUILD_TAG   = "v2.${env.BUILD_NUMBER}"
     }
-    
+
     stages {
         stage('Checkout Code') {
             agent {
                 kubernetes {
                     yaml """
-                        apiVersion: v1
-                        kind: Pod
-                        spec:
-                          containers:
-                          - name: git
-                            image: alpine/git:latest
-                            command:
-                            - cat
-                            tty: true
-                    """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: git
+    image: alpine/git:latest
+    command: [\"cat\"]
+    tty: true
+    resources:
+      requests:
+        cpu: \"100m\"
+        memory: \"128Mi\"
+      limits:
+        cpu: \"200m\"
+        memory: \"256Mi\"
+"""
                 }
             }
             steps {
@@ -33,65 +40,79 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Build with Maven') {
             agent {
                 kubernetes {
                     yaml """
-                        apiVersion: v1
-                        kind: Pod
-                        spec:
-                          containers:
-                          - name: maven
-                            image: maven:3.8.6-eclipse-temurin-17
-                            command:
-                            - cat
-                            tty: true
-                            volumeMounts:
-                            - name: maven-cache
-                              mountPath: /root/.m2
-                          volumes:
-                          - name: maven-cache
-                            emptyDir: {}
-                    """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: maven
+    image: maven:3.8.6-eclipse-temurin-17
+    command: [\"cat\"]
+    tty: true
+    volumeMounts:
+    - name: maven-cache
+      mountPath: /root/.m2
+    resources:
+      requests:
+        cpu: \"500m\"
+        memory: \"1Gi\"
+      limits:
+        cpu: \"1\"
+        memory: \"2Gi\"
+  volumes:
+  - name: maven-cache
+    emptyDir: {}
+"""
                 }
             }
             steps {
                 container('maven') {
-                    echo "🔨 Building Java application with Maven..."
+                    echo "🔨 Building Java application..."
                     unstash 'source-code'
                     sh 'mvn clean package -DskipTests'
-                    stash includes: 'target/*.jar,Dockerfile,deployment.yaml,service.yaml', name: 'build-artifacts'
+                    stash includes: 'target/*.jar,Dockerfile,deployment.yaml,service.yaml,ingress.yaml', name: 'build-artifacts'
                     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                 }
             }
         }
-        
+
         stage('Run Tests') {
             agent {
                 kubernetes {
                     yaml """
-                        apiVersion: v1
-                        kind: Pod
-                        spec:
-                          containers:
-                          - name: maven
-                            image: maven:3.8.6-eclipse-temurin-17
-                            command:
-                            - cat
-                            tty: true
-                            volumeMounts:
-                            - name: maven-cache
-                              mountPath: /root/.m2
-                          volumes:
-                          - name: maven-cache
-                            emptyDir: {}
-                    """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: maven
+    image: maven:3.8.6-eclipse-temurin-17
+    command: [\"cat\"]
+    tty: true
+    volumeMounts:
+    - name: maven-cache
+      mountPath: /root/.m2
+    resources:
+      requests:
+        cpu: \"500m\"
+        memory: \"1Gi\"
+      limits:
+        cpu: \"1\"
+        memory: \"2Gi\"
+  volumes:
+  - name: maven-cache
+    emptyDir: {}
+"""
                 }
             }
             steps {
                 container('maven') {
-                    echo "🧪 Running tests..."
+                    echo "🧪 Running unit tests..."
                     unstash 'source-code'
                     sh 'mvn test'
                 }
@@ -106,185 +127,153 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Build & Push Docker Image') {
             agent {
                 kubernetes {
                     yaml """
-                        apiVersion: v1
-                        kind: Pod
-                        spec:
-                          containers:
-                          - name: kaniko
-                            image: gcr.io/kaniko-project/executor:debug
-                            command: ["/busybox/cat"]
-                            tty: true
-                            volumeMounts:
-                            - name: kaniko-secret
-                              mountPath: /kaniko/.docker
-                          volumes:
-                          - name: kaniko-secret
-                            secret:
-                              secretName: dockerhub-secret
-                              items:
-                              - key: .dockerconfigjson
-                                path: config.json
-                    """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:debug
+    command: [\"/busybox/cat\"]
+    tty: true
+    volumeMounts:
+    - name: kaniko-config
+      mountPath: /kaniko/.docker
+    resources:
+      requests:
+        cpu: \"500m\"
+        memory: \"1Gi\"
+      limits:
+        cpu: \"1\"
+        memory: \"2Gi\"
+  volumes:
+  - name: kaniko-config
+    emptyDir: {}
+"""
                 }
             }
             steps {
                 container('kaniko') {
-                    echo "🐳 Building and pushing Docker image with Kaniko..."
+                    echo "🐳 Building & pushing Docker image via Kaniko..."
                     unstash 'build-artifacts'
-                    
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
-                                                   passwordVariable: 'DOCKER_PASS', 
-                                                   usernameVariable: 'DOCKER_USER')]) {
-                        script {
-                            sh '''
-                                # Create Docker config for Kaniko
-                                echo "{\\"auths\\":{\\"https://index.docker.io/v1/\\":{\\"username\\":\\"$DOCKER_USER\\",\\"password\\":\\"$DOCKER_PASS\\"}}}" > /kaniko/.docker/config.json
-                                
-                                # Build and push with Kaniko
-                                /kaniko/executor \
-                                  --dockerfile=Dockerfile \
-                                  --context=. \
-                                  --destination=${DOCKER_IMAGE}:${BUILD_TAG} \
-                                  --destination=${DOCKER_IMAGE}:dev-latest \
-                                  --cache=true \
-                                  --verbosity=info
-                                
-                                echo "✅ Successfully built and pushed:"
-                                echo "   - ${DOCKER_IMAGE}:${BUILD_TAG}"
-                                echo "   - ${DOCKER_IMAGE}:dev-latest"
-                            '''
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Deploy to Dev Environment') {
-            agent {
-                kubernetes {
-                    yaml """
-                        apiVersion: v1
-                        kind: Pod
-                        spec:
-                          serviceAccountName: jenkins
-                          containers:
-                          - name: kubectl
-                            image: bitnami/kubectl:1.28
-                            command:
-                            - cat
-                            tty: true
-                    """
-                }
-            }
-            steps {
-                container('kubectl') {
-                    echo "🚀 Deploying to dev environment..."
-                    unstash 'build-artifacts'
-                    script {
-                        sh """
-                            # Create dev namespace
-                            kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
-                            
-                            # Update deployment with new image
-                            sed -i 's|image: anuopp/java-ecommerce:.*|image: ${DOCKER_IMAGE}:${BUILD_TAG}|g' deployment.yaml
-                            
-                            # Apply manifests
-                            kubectl apply -f deployment.yaml -n dev
-                            kubectl apply -f service.yaml -n dev
-                            
-                            # Wait for rollout
-                            kubectl rollout status deployment/ecommerce-deployment -n dev --timeout=300s
-                            
-                            echo "📊 Deployment Status:"
-                            kubectl get pods -n dev -l app=ecommerce -o wide
-                            kubectl get service -n dev ecommerce-service
-                            kubectl get ingress -n dev ecommerce-dev-ingress
-                        """
-                    }
-                }
-            }
-        }
-        
-        stage('Health Check & Verification') {
-            agent {
-                kubernetes {
-                    yaml """
-                        apiVersion: v1
-                        kind: Pod
-                        spec:
-                          serviceAccountName: jenkins
-                          containers:
-                          - name: kubectl
-                            image: bitnami/kubectl:1.28
-                            command:
-                            - cat
-                            tty: true
-                    """
-                }
-            }
-            steps {
-                container('kubectl') {
-                    echo "🏥 Performing health checks..."
-                    script {
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                                                       usernameVariable: 'DOCKER_USER',
+                                                       passwordVariable: 'DOCKER_PASS')]) {
                         sh '''
-                            # Wait for pods to be ready
-                            sleep 30
-                            
-                            echo "🔍 Final Health Check:"
-                            kubectl get pods -n dev -l app=ecommerce
-                            
-                            # Check running pods
-                            RUNNING_PODS=$(kubectl get pods -n dev -l app=ecommerce --field-selector=status.phase=Running --no-headers | wc -l)
-                            echo "✅ Running pods: $RUNNING_PODS/2"
-                            
-                            # Get application URL
-                            INGRESS_URL=$(kubectl get ingress ecommerce-dev-ingress -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Still provisioning...")
-                            echo "🌍 Application URL: http://$INGRESS_URL"
-                            
-                            if [ "$RUNNING_PODS" -eq "2" ]; then
-                                echo "🎉 All pods running successfully!"
-                                echo "🚀 Deployment completed successfully!"
-                            else
-                                echo "⚠️  Checking pod status..."
-                                kubectl describe pods -n dev -l app=ecommerce
-                            fi
+                            mkdir -p /kaniko/.docker
+                            cat <<EOF > /kaniko/.docker/config.json
+{"auths":{"https://index.docker.io/v1/":{"username":"$DOCKER_USER","password":"$DOCKER_PASS"}}}
+EOF
+                            /kaniko/executor \
+                              --dockerfile=Dockerfile \
+                              --context=$WORKSPACE \
+                              --destination=${DOCKER_IMAGE}:${BUILD_TAG} \
+                              --destination=${DOCKER_IMAGE}:dev-latest \
+                              --verbosity=info
                         '''
                     }
                 }
             }
         }
+
+        stage('Deploy to Dev Environment') {
+            agent {
+                kubernetes {
+                    yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: kubectl
+    image: bitnami/kubectl:1.28
+    command: [\"cat\"]
+    tty: true
+    resources:
+      requests:
+        cpu: \"100m\"
+        memory: \"128Mi\"
+      limits:
+        cpu: \"200m\"
+        memory: \"256Mi\"
+"""
+                }
+            }
+            steps {
+                container('kubectl') {
+                    echo "🚀 Deploying to dev namespace..."
+                    unstash 'build-artifacts'
+                    sh """
+                        kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+                        sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${BUILD_TAG}|g' deployment.yaml
+                        kubectl apply -f deployment.yaml -n dev
+                        kubectl apply -f service.yaml -n dev
+                        kubectl apply -f ingress.yaml -n dev || true
+                        kubectl rollout status deployment/ecommerce-deployment -n dev --timeout=300s
+                    """
+                }
+            }
+        }
+
+        stage('Health Check & Verification') {
+            agent {
+                kubernetes {
+                    yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: kubectl
+    image: bitnami/kubectl:1.28
+    command: [\"cat\"]
+    tty: true
+    resources:
+      requests:
+        cpu: \"100m\"
+        memory: \"128Mi\"
+      limits:
+        cpu: \"200m\"
+        memory: \"256Mi\"
+"""
+                }
+            }
+            steps {
+                container('kubectl') {
+                    echo "🏥 Performing health check..."
+                    sh '''
+                        sleep 30
+                        RUNNING=$(kubectl get pods -n dev -l app=ecommerce --field-selector=status.phase=Running --no-headers | wc -l)
+                        echo "Running pods: $RUNNING"
+                        INGRESS_HOST=$(kubectl get ingress ecommerce-dev-ingress -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+                        if [ -n "$INGRESS_HOST" ]; then
+                            if ! curl -sf http://$INGRESS_HOST/actuator/health; then
+                                echo "Health endpoint failed"; exit 1
+                            fi
+                            echo "App is healthy at http://$INGRESS_HOST"
+                        else
+                            echo "Ingress not ready yet"
+                        fi
+                    '''
+                }
+            }
+        }
     }
-    
+
     post {
         always {
-            echo "🧹 Pipeline execution completed"
+            echo "🧹 Pipeline finished"
         }
         success {
-            echo "🎉 SUCCESS: Complete CI/CD pipeline executed successfully!"
-            echo "📋 Automated Build & Deployment Summary:"
-            echo "   ✅ Source code checked out from GitHub"
-            echo "   ✅ Java application built with Maven"
-            echo "   ✅ Unit tests executed"
-            echo "   ✅ Docker image built and tagged: ${BUILD_TAG}"
-            echo "   ✅ Image pushed to DockerHub repository"
-            echo "   ✅ Application deployed to dev namespace"
-            echo "   ✅ ALB ingress configured for public access"
-            echo "   ✅ Health checks completed"
-            echo ""
-            echo "🏆 PROJECT 1 REQUIREMENT SATISFIED:"
-            echo "   'Use Jenkins to automate build and deployment' ✅"
-            echo ""
-            echo "🌍 Access your application via the ingress URL above!"
-            echo "📊 Monitor in Grafana: http://k8s-monitori-grafanao-fe0fadbbd1-69729975.us-east-1.elb.amazonaws.com/"
+            echo "🎉 SUCCESS: Image ${DOCKER_IMAGE}:${BUILD_TAG} pushed and deployed"
         }
         failure {
-            echo "❌ FAILURE: CI/CD pipeline failed!"
-            echo "📧 Check console output above for detailed error information"
+            echo "❌ FAILURE: Check above logs"
         }
     }
 }
