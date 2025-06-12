@@ -4,8 +4,6 @@ pipeline {
     environment {
         DOCKER_IMAGE = "anuopp/java-ecommerce"
         BUILD_TAG   = "v2.${env.BUILD_NUMBER}"
-        // Optional: expose WORKSPACE_QUOTED to avoid repeated quoting
-        WORKSPACE_QUOTED = '"$WORKSPACE"'
     }
 
     stages {
@@ -36,7 +34,6 @@ spec:
                 }
             }
             steps {
-                // The Git stage may emit JENKINS-30600 warning :contentReference[oaicite:9]{index=9}, but if checkout works, it can be ignored.
                 container('git') {
                     echo "🔄 Checking out dev branch..."
                     checkout([
@@ -89,7 +86,6 @@ spec:
                     echo "🔨 Building Java application..."
                     unstash 'source-code'
                     sh 'mvn clean package -DskipTests'
-                    // Ensure Dockerfile, manifests are stashed for later stages
                     stash includes: 'target/*.jar,Dockerfile,deployment.yaml,service.yaml,ingress.yaml', name: 'build-artifacts'
                     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                 }
@@ -164,7 +160,7 @@ spec:
       mountPath: /kaniko/.docker
     resources:
       requests:
-        cpu: "300m"         # Reduced requests to fit typical node sizes
+        cpu: "300m"
         memory: "1Gi"
       limits:
         cpu: "600m"
@@ -182,13 +178,6 @@ spec:
                 container('kaniko') {
                     echo "🐳 Building & pushing Docker image via Kaniko..."
                     unstash 'build-artifacts'
-                    // Print node resources if scheduling fails, for debugging:
-                    sh '''
-                      echo "===== Node resources for debugging ====="
-                      kubectl get nodes -o wide
-                      kubectl describe nodes | grep -A2 "Allocatable"
-                      echo "======================================="
-                    '''
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
                                                        usernameVariable: 'DOCKER_USER',
                                                        passwordVariable: 'DOCKER_PASS')]) {
@@ -197,7 +186,7 @@ spec:
                             cat <<EOF > /kaniko/.docker/config.json
 {"auths":{"https://index.docker.io/v1/":{"username":"$DOCKER_USER","password":"$DOCKER_PASS"}}}
 EOF
-                            # Quote context so spaces in WORKSPACE are handled
+                            # Quote context to handle spaces in WORKSPACE path
                             /kaniko/executor \
                               --dockerfile=Dockerfile \
                               --context="$WORKSPACE" \
@@ -245,7 +234,6 @@ spec:
                     unstash 'build-artifacts'
                     sh """
                         kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
-                        # Update image in deployment.yaml; ensure sed handles paths correctly
                         sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${BUILD_TAG}|g' deployment.yaml
                         kubectl apply -f deployment.yaml -n dev
                         kubectl apply -f service.yaml -n dev
