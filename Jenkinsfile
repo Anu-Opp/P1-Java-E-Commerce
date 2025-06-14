@@ -1,4 +1,4 @@
-ipeline {
+pipeline {
     agent none
     
     environment {
@@ -149,12 +149,12 @@ ipeline {
                     timeout(time: 15, unit: 'MINUTES') {
                         script {
                             sh """
-                                echo "📦 Deploying to production (default namespace)..."
+                                echo "📦 Deploying to dev namespace for testing..."
                                 
                                 # Check current deployment status
                                 echo "🔍 Current deployment status:"
-                                kubectl get deployment java-ecommerce -n default -o wide || echo "Deployment not found"
-                                kubectl get pods -n default -l app=java-ecommerce -o wide || echo "No pods found"
+                                kubectl get deployment java-ecommerce -n dev -o wide || echo "Deployment not found"
+                                kubectl get pods -n dev -l app=java-ecommerce -o wide || echo "No pods found"
                                 
                                 # Check node resources
                                 echo "🖥️ Node resources:"
@@ -234,6 +234,7 @@ spec:
                             restartPolicy: Always
                       nodeSelector:
                         kubernetes.io/os: linux
+                        node.kubernetes.io/instance-type: t3.medium
                       tolerations:
                       - key: "node.kubernetes.io/not-ready"
                         operator: "Exists"
