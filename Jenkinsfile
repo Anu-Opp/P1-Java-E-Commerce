@@ -146,7 +146,7 @@ pipeline {
                     echo "🚀 Deploying to production environment from main branch..."
                     unstash 'build-artifacts'
                     
-                    timeout(time: 10, unit: 'MINUTES') {
+                    timeout(time: 15, unit: 'MINUTES') {
                         script {
                             sh """
                                 echo "📦 Deploying to production (default namespace)..."
@@ -231,7 +231,14 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 12
-      restartPolicy: Always
+                            restartPolicy: Always
+                      nodeSelector:
+                        kubernetes.io/os: linux
+                      tolerations:
+                      - key: "node.kubernetes.io/not-ready"
+                        operator: "Exists"
+                        effect: "NoExecute"
+                        tolerationSeconds: 300
   strategy:
     type: RollingUpdate
     rollingUpdate:
