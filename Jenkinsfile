@@ -43,10 +43,17 @@ pipeline {
                         spec:
                           containers:
                           - name: maven
-                            image: maven:3.8.6-eclipse-temurin-17
+                            image: maven:3.9.4-eclipse-temurin-17
                             command: [cat]
                             tty: true
                             workingDir: /home/jenkins/agent
+                            resources:
+                              requests:
+                                memory: "512Mi"
+                                cpu: "250m"
+                              limits:
+                                memory: "1Gi"
+                                cpu: "500m"
                     """
                 }
             }
@@ -74,6 +81,13 @@ pipeline {
                             command: ["/busybox/cat"]
                             tty: true
                             workingDir: /kaniko/workspace
+                            resources:
+                              requests:
+                                memory: "1Gi"
+                                cpu: "500m"
+                              limits:
+                                memory: "2Gi"
+                                cpu: "1000m"
                     """
                 }
             }
@@ -149,17 +163,16 @@ pipeline {
                     timeout(time: 15, unit: 'MINUTES') {
                         script {
                             sh """
-                                echo "📦 Deploying to dev namespace for testing..."
+                                echo "📦 Deploying to default namespace..."
                                 
                                 # Check current deployment status
                                 echo "🔍 Current deployment status:"
-                                kubectl get deployment java-ecommerce -n dev -o wide || echo "Deployment not found"
-                                kubectl get pods -n dev -l app=java-ecommerce -o wide || echo "No pods found"
+                                kubectl get deployment java-ecommerce -n default -o wide || echo "Deployment not found"
+                                kubectl get pods -n default -l app=java-ecommerce -o wide || echo "No pods found"
                                 
                                 # Check node resources
                                 echo "🖥️ Node resources:"
                                 kubectl top nodes || echo "Metrics not available"
-                                kubectl describe nodes | grep -A 5 "Allocated resources" || echo "Resource info not available"
                                 
                                 # Force delete any stuck pods first
                                 echo "🧹 Cleaning up any stuck pods..."
@@ -171,7 +184,7 @@ pipeline {
                                 sleep 10
                                 
                                 # Create or update deployment with correct labels
-                                echo "🔄 Creating/updating deployment with correct label configuration..."
+                                echo "🔄 Creating/updating deployment..."
                                 kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -179,16 +192,16 @@ metadata:
   name: java-ecommerce
   namespace: default
   labels:
-    app: ecommerce
+    app: java-ecommerce
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ecommerce
+      app: java-ecommerce
   template:
     metadata:
       labels:
-        app: ecommerce
+        app: java-ecommerce
     spec:
       containers:
       - name: java-ecommerce
@@ -204,11 +217,11 @@ spec:
           value: "${BUILD_TAG}"
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
             memory: "256Mi"
-            cpu: "200m"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /
@@ -231,15 +244,14 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 12
-                            restartPolicy: Always
-                      nodeSelector:
-                        kubernetes.io/os: linux
-                        node.kubernetes.io/instance-type: t3.medium
-                      tolerations:
-                      - key: "node.kubernetes.io/not-ready"
-                        operator: "Exists"
-                        effect: "NoExecute"
-                        tolerationSeconds: 300
+      restartPolicy: Always
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - key: "node.kubernetes.io/not-ready"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -253,7 +265,7 @@ metadata:
   namespace: default
 spec:
   selector:
-    app: ecommerce
+    app: java-ecommerce
   ports:
     - protocol: TCP
       port: 80
@@ -262,19 +274,24 @@ spec:
 EOF
                                 
                                 # Create ingress if it doesn't exist
-                                if ! kubectl get ingress ecommerce-working-ingress -n default >/dev/null 2>&1; then
+                                if ! kubectl get ingress ecommerce-ingress -n default >/dev/null 2>&1; then
                                     echo "🌐 Creating production ingress..."
                                     kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ecommerce-working-ingress
+  name: ecommerce-ingress
   namespace: default
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/backend-protocol: HTTP
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
 spec:
   ingressClassName: alb
   rules:
@@ -290,7 +307,7 @@ spec:
 EOF
                                 fi
                                 
-                                # Wait for rollout to complete with correct labels
+                                # Wait for rollout to complete
                                 echo "⏳ Waiting for deployment rollout..."
                                 kubectl rollout status deployment/java-ecommerce -n default --timeout=300s
                                 
@@ -305,7 +322,7 @@ EOF
                                 # Pod status with detailed info
                                 echo ""
                                 echo "📦 Pod Status:"
-                                kubectl get pods -n default -l app=ecommerce -o wide
+                                kubectl get pods -n default -l app=java-ecommerce -o wide
                                 
                                 # Service status
                                 echo ""
@@ -315,10 +332,10 @@ EOF
                                 # Ingress status with URL
                                 echo ""
                                 echo "🌐 Ingress Status:"
-                                kubectl get ingress -n default ecommerce-working-ingress
+                                kubectl get ingress -n default ecommerce-ingress
                                 
                                 # Get and display application URL
-                                INGRESS_URL=\$(kubectl get ingress ecommerce-working-ingress -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Still provisioning...")
+                                INGRESS_URL=\$(kubectl get ingress ecommerce-ingress -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Still provisioning...")
                                 echo ""
                                 echo "🎯 Application URLs:"
                                 echo "   Production: http://\$INGRESS_URL"
@@ -328,7 +345,7 @@ EOF
                                 # Health check with detailed output
                                 echo ""
                                 echo "🏥 Application Health Check:"
-                                POD_NAME=\$(kubectl get pods -n default -l app=ecommerce -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "none")
+                                POD_NAME=\$(kubectl get pods -n default -l app=java-ecommerce -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "none")
                                 if [ "\$POD_NAME" != "none" ]; then
                                     POD_STATUS=\$(kubectl get pod \$POD_NAME -n default -o jsonpath='{.status.phase}')
                                     echo "   Pod Name: \$POD_NAME"
