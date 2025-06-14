@@ -146,7 +146,7 @@ pipeline {
                     echo "🚀 Deploying to production environment from main branch..."
                     unstash 'build-artifacts'
                     
-                    timeout(time: 15, unit: 'MINUTES') {
+                    timeout(time: 10, unit: 'MINUTES') {
                         script {
                             sh """
                                 echo "📦 Deploying to production (default namespace)..."
