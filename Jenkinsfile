@@ -52,10 +52,10 @@ pipeline {
             }
             steps {
                 container('maven') {
-                    echo "🔨 Building Java application from main branch with Maven..."
+                    echo "🔨 Building Java application..."
                     unstash 'source-code'
                     sh 'mvn clean package -DskipTests'
-                    stash includes: 'target/*.jar,Dockerfile,deployment.yaml,service.yaml', name: 'build-artifacts'
+                    stash includes: 'target/*.jar,Dockerfile', name: 'build-artifacts'
                     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                 }
             }
@@ -79,38 +79,33 @@ pipeline {
             }
             steps {
                 container('kaniko') {
-                    echo "🐳 Building and pushing Docker image from main branch with Kaniko..."
+                    echo "🐳 Building and pushing Docker image..."
                     unstash 'build-artifacts'
                     
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
                                                    passwordVariable: 'DOCKER_PASS', 
                                                    usernameVariable: 'DOCKER_USER')]) {
-                        script {
-                            sh '''
-                                # Create Docker config for Kaniko
-                                mkdir -p /kaniko/.docker
-                                echo "{\\"auths\\":{\\"https://index.docker.io/v1/\\":{\\"username\\":\\"$DOCKER_USER\\",\\"password\\":\\"$DOCKER_PASS\\"}}}" > /kaniko/.docker/config.json
-                                
-                                # Build and push with Kaniko from main branch
-                                /kaniko/executor \
-                                  --dockerfile=Dockerfile \
-                                  --context=. \
-                                  --destination=${DOCKER_IMAGE}:${BUILD_TAG} \
-                                  --destination=${DOCKER_IMAGE}:main-latest \
-                                  --cache=true \
-                                  --verbosity=info
-                                
-                                echo "✅ Successfully built and pushed from main branch:"
-                                echo "   - ${DOCKER_IMAGE}:${BUILD_TAG}"
-                                echo "   - ${DOCKER_IMAGE}:main-latest"
-                            '''
-                        }
+                        sh '''
+                            mkdir -p /kaniko/.docker
+                            echo "{\\"auths\\":{\\"https://index.docker.io/v1/\\":{\\"username\\":\\"$DOCKER_USER\\",\\"password\\":\\"$DOCKER_PASS\\"}}}" > /kaniko/.docker/config.json
+                            
+                            /kaniko/executor \
+                              --dockerfile=Dockerfile \
+                              --context=. \
+                              --destination=${DOCKER_IMAGE}:${BUILD_TAG} \
+                              --destination=${DOCKER_IMAGE}:latest \
+                              --cache=true
+                            
+                            echo "✅ Successfully built and pushed:"
+                            echo "   - ${DOCKER_IMAGE}:${BUILD_TAG}"
+                            echo "   - ${DOCKER_IMAGE}:latest"
+                        '''
                     }
                 }
             }
         }
         
-        stage('Deploy to Production Environment') {
+        stage('Deploy to Dev Environment') {
             agent {
                 kubernetes {
                     yaml """
@@ -118,243 +113,53 @@ pipeline {
                         kind: Pod
                         spec:
                           serviceAccountName: jenkins
-                          securityContext:
-                            runAsUser: 1000
-                            runAsGroup: 1000
-                            fsGroup: 1000
                           containers:
                           - name: kubectl
                             image: bitnami/kubectl:1.28
                             command: [cat]
                             tty: true
                             workingDir: /home/jenkins/agent
-                            securityContext:
-                              runAsUser: 1000
-                              runAsGroup: 1000
                             resources:
                               requests:
+                                memory: "64Mi"
+                                cpu: "50m"
+                              limits:
                                 memory: "128Mi"
                                 cpu: "100m"
-                              limits:
-                                memory: "256Mi"
-                                cpu: "200m"
                     """
                 }
             }
             steps {
                 container('kubectl') {
-                    echo "🚀 Deploying to production environment from main branch..."
-                    unstash 'build-artifacts'
+                    echo "🚀 Deploying to dev environment..."
                     
-                    timeout(time: 15, unit: 'MINUTES') {
-                        script {
-                            sh """
-                                echo "📦 Deploying to production (default namespace)..."
-                                
-                                # Check current deployment status
-                                echo "🔍 Current deployment status:"
-                                kubectl get deployment java-ecommerce -n default -o wide || echo "Deployment not found"
-                                kubectl get pods -n default -l app=java-ecommerce -o wide || echo "No pods found"
-                                
-                                # Check node resources
-                                echo "🖥️ Node resources:"
-                                kubectl top nodes || echo "Metrics not available"
-                                kubectl describe nodes | grep -A 5 "Allocated resources" || echo "Resource info not available"
-                                
-                                # Force delete any stuck pods first
-                                echo "🧹 Cleaning up any stuck pods..."
-                                kubectl get pods -n default -l app=java-ecommerce --field-selector=status.phase=Pending -o name | xargs -r kubectl delete --force --grace-period=0 || echo "No stuck pods"
-                                
-                                # Scale down first to release resources
-                                echo "⬇️ Scaling down temporarily..."
-                                kubectl scale deployment java-ecommerce -n default --replicas=0 || echo "Scale down failed"
-                                sleep 10
-                                
-                                # Create or update deployment with correct labels
-                                echo "🔄 Creating/updating deployment with correct label configuration..."
-                                kubectl apply -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: java-ecommerce
-  namespace: default
-  labels:
-    app: ecommerce
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ecommerce
-  template:
-    metadata:
-      labels:
-        app: ecommerce
-    spec:
-      containers:
-      - name: java-ecommerce
-        image: ${DOCKER_IMAGE}:${BUILD_TAG}
-        ports:
-        - containerPort: 8080
-        env:
-        - name: BUILD_NUMBER
-          value: "${BUILD_NUMBER}"
-        - name: BRANCH
-          value: "main"
-        - name: BUILD_TAG
-          value: "${BUILD_TAG}"
-        resources:
-          requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
-            memory: "256Mi"
-            cpu: "200m"
-        livenessProbe:
-          httpGet:
-            path: /
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 30
-          timeoutSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          timeoutSeconds: 5
-        startupProbe:
-          httpGet:
-            path: /
-            port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 12
-                            restartPolicy: Always
-                      nodeSelector:
-                        kubernetes.io/os: linux
-                      tolerations:
-                      - key: "node.kubernetes.io/not-ready"
-                        operator: "Exists"
-                        effect: "NoExecute"
-                        tolerationSeconds: 300
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: java-ecommerce-service
-  namespace: default
-spec:
-  selector:
-    app: ecommerce
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8080
-  type: ClusterIP
-EOF
-                                
-                                # Create ingress if it doesn't exist
-                                if ! kubectl get ingress ecommerce-working-ingress -n default >/dev/null 2>&1; then
-                                    echo "🌐 Creating production ingress..."
-                                    kubectl apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ecommerce-working-ingress
-  namespace: default
-  annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/backend-protocol: HTTP
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-spec:
-  ingressClassName: alb
-  rules:
-  - http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: java-ecommerce-service
-            port:
-              number: 80
-EOF
-                                fi
-                                
-                                # Wait for rollout to complete with correct labels
-                                echo "⏳ Waiting for deployment rollout..."
-                                kubectl rollout status deployment/java-ecommerce -n default --timeout=300s
-                                
-                                echo ""
-                                echo "📊 Final Production Deployment Status:"
-                                echo "════════════════════════════════════════════"
-                                
-                                # Deployment status
-                                echo "🚀 Deployment Status:"
-                                kubectl get deployment java-ecommerce -n default -o wide
-                                
-                                # Pod status with detailed info
-                                echo ""
-                                echo "📦 Pod Status:"
-                                kubectl get pods -n default -l app=ecommerce -o wide
-                                
-                                # Service status
-                                echo ""
-                                echo "🔗 Service Status:"
-                                kubectl get service -n default java-ecommerce-service
-                                
-                                # Ingress status with URL
-                                echo ""
-                                echo "🌐 Ingress Status:"
-                                kubectl get ingress -n default ecommerce-working-ingress
-                                
-                                # Get and display application URL
-                                INGRESS_URL=\$(kubectl get ingress ecommerce-working-ingress -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Still provisioning...")
-                                echo ""
-                                echo "🎯 Application URLs:"
-                                echo "   Production: http://\$INGRESS_URL"
-                                echo "   Build Tag: ${BUILD_TAG}"
-                                echo "   Branch: main"
-                                
-                                # Health check with detailed output
-                                echo ""
-                                echo "🏥 Application Health Check:"
-                                POD_NAME=\$(kubectl get pods -n default -l app=ecommerce -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "none")
-                                if [ "\$POD_NAME" != "none" ]; then
-                                    POD_STATUS=\$(kubectl get pod \$POD_NAME -n default -o jsonpath='{.status.phase}')
-                                    echo "   Pod Name: \$POD_NAME"
-                                    echo "   Pod Status: \$POD_STATUS"
-                                    
-                                    if [ "\$POD_STATUS" = "Running" ]; then
-                                        echo "   ✅ Application is healthy and running!"
-                                        
-                                        # Test internal connectivity
-                                        echo "   🔍 Testing internal connectivity..."
-                                        if kubectl exec \$POD_NAME -n default -- curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ | grep -q "200"; then
-                                            echo "   ✅ Internal health check passed!"
-                                        else
-                                            echo "   ⚠️ Internal health check inconclusive"
-                                        fi
-                                    else
-                                        echo "   ⚠️ Pod not in Running state"
-                                    fi
-                                else
-                                    echo "   ❌ No pods found"
-                                fi
-                                
-                                echo ""
-                                echo "════════════════════════════════════════════"
-                                echo "✅ Production deployment from main branch completed successfully!"
-                            """
-                        }
+                    script {
+                        sh """
+                            echo "📦 Deploying to dev namespace..."
+                            
+                            # Create namespace if it doesn't exist
+                            kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+                            
+                            # Update the deployment with new image
+                            kubectl set image deployment/ecommerce-deployment java-ecommerce=${DOCKER_IMAGE}:${BUILD_TAG} -n dev || \\
+                            kubectl create deployment ecommerce-deployment --image=${DOCKER_IMAGE}:${BUILD_TAG} -n dev
+                            
+                            # Ensure service exists
+                            kubectl expose deployment ecommerce-deployment --port=80 --target-port=8080 --name=ecommerce-service -n dev --dry-run=client -o yaml | kubectl apply -f -
+                            
+                            # Wait for rollout with shorter timeout
+                            kubectl rollout status deployment/ecommerce-deployment -n dev --timeout=300s
+                            
+                            echo ""
+                            echo "📊 Deployment Status:"
+                            kubectl get deployment ecommerce-deployment -n dev -o wide
+                            kubectl get pods -n dev -l app=ecommerce-deployment -o wide
+                            kubectl get service ecommerce-service -n dev
+                            
+                            echo ""
+                            echo "✅ Deployment completed successfully!"
+                            echo "🎯 Application deployed with image: ${DOCKER_IMAGE}:${BUILD_TAG}"
+                        """
                     }
                 }
             }
@@ -366,22 +171,18 @@ EOF
             echo "🧹 Pipeline execution completed"
         }
         success {
-            echo "🎉 SUCCESS: Main Branch CI/CD pipeline completed!"
+            echo "🎉 SUCCESS: Pipeline completed successfully!"
             echo "📋 Build Summary:"
-            echo "   ✅ Java application built from main branch with Maven"
-            echo "   ✅ Docker image built and tagged: ${BUILD_TAG}"
-            echo "   ✅ Image tagged as main-latest"
-            echo "   ✅ Image pushed to DockerHub repository"
-            echo "   ✅ Production deployment updated from main branch"
+            echo "   ✅ Code checked out from main branch"
+            echo "   ✅ Java application built with Maven"
+            echo "   ✅ Docker image built and pushed: ${BUILD_TAG}"
+            echo "   ✅ Application deployed to dev environment"
             echo ""
-            echo "🏆 PROJECT 1 REQUIREMENTS SATISFIED!"
-            echo "🌐 Your main branch application is live and accessible!"
-            echo "🚀 Production deployment from main branch complete!"
+            echo "🚀 Your application is now running!"
         }
         failure {
-            echo "❌ FAILURE: Main branch pipeline failed!"
+            echo "❌ FAILURE: Pipeline failed!"
             echo "🔧 Check logs above for details"
-            echo "💡 Common issues: Resource constraints, pod scheduling, or image pull problems"
         }
     }
 }
