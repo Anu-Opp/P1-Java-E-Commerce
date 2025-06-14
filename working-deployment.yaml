@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "5"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"ecommerce"},"name":"ecommerce-deployment","namespace":"dev"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"ecommerce"}},"template":{"metadata":{"labels":{"app":"ecommerce"}},"spec":{"containers":[{"image":"anuopp/java-ecommerce:v2.13","livenessProbe":{"httpGet":{"path":"/","port":8080},"initialDelaySeconds":30,"periodSeconds":10},"name":"java-ecommerce","ports":[{"containerPort":8080}],"readinessProbe":{"httpGet":{"path":"/","port":8080},"initialDelaySeconds":5,"periodSeconds":5},"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"250m","memory":"256Mi"}}}]}}}}
+  creationTimestamp: "2025-06-12T21:00:50Z"
+  generation: 5
+  labels:
+    app: ecommerce
+  name: ecommerce-deployment
+  namespace: dev
+  resourceVersion: "1114570"
+  uid: 8638f43c-b870-4655-86b1-b629af723bea
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 2
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: ecommerce
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: ecommerce
+    spec:
+      containers:
+      - image: anuopp/java-ecommerce:v2.20
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: java-ecommerce
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 250m
+            memory: 256Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+status:
+  availableReplicas: 2
+  conditions:
+  - lastTransitionTime: "2025-06-12T21:00:50Z"
+    lastUpdateTime: "2025-06-12T23:06:58Z"
+    message: ReplicaSet "ecommerce-deployment-665474cb6d" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  - lastTransitionTime: "2025-06-14T09:23:26Z"
+    lastUpdateTime: "2025-06-14T09:23:26Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  observedGeneration: 5
+  readyReplicas: 2
+  replicas: 2
+  updatedReplicas: 2
