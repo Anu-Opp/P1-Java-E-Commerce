@@ -178,13 +178,13 @@ pipeline {
                                 echo "🧹 Cleaning up any stuck pods..."
                                 kubectl get pods -n default -l app=java-ecommerce --field-selector=status.phase=Pending -o name | xargs -r kubectl delete --force --grace-period=0 || echo "No stuck pods"
                                 
-                                # Scale down first to release resources
-                                echo "⬇️ Scaling down temporarily..."
-                                kubectl scale deployment java-ecommerce -n default --replicas=0 || echo "Scale down failed"
-                                sleep 10
+                                # Delete the deployment completely to fix label selector issue
+                                echo "🗑️ Removing existing deployment to fix label selector..."
+                                kubectl delete deployment java-ecommerce -n default || echo "Deployment not found"
+                                sleep 5
                                 
-                                # Create or update deployment with correct labels
-                                echo "🔄 Creating/updating deployment..."
+                                # Create fresh deployment with correct labels
+                                echo "🔄 Creating fresh deployment..."
                                 kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
